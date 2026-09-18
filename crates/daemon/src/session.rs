@@ -44,13 +44,22 @@ impl FrameSource<'_> {
         }
     }
 
-    /// Capture and push one frame. Returns `false` (nothing pushed, no
-    /// error) when the backend has nothing new — currently only possible on
-    /// the evdi path, which is damage-driven and reports "no update yet" as
-    /// a plain timeout rather than blocking indefinitely the way the Wayland
-    /// path does. The caller should not advance its frame index/timestamp
-    /// when this returns `false`.
-    fn capture_and_push(&mut self, encoder: &Encoder, pts_ns: u64) -> Result<bool> {
+    /// Capture and push one frame at a *constant* rate: on the evdi path,
+    /// this pushes whatever is currently in the buffer whether or not
+    /// anything actually changed since the last call, so the output stream
+    /// keeps a steady cadence instead of stalling every time the desktop is
+    /// idle. `evdi_timeout` bounds how long to wait for evdi to report a
+    /// fresher frame before giving up and reusing what's already there —
+    /// see the pacing loop in `run()`, which budgets this against the
+    /// target frame interval. The Wayland path is unaffected: its capture
+    /// protocol has no equivalent "get the current buffer regardless" mode,
+    /// so it keeps blocking for a genuinely new frame each call.
+    fn capture_and_push(
+        &mut self,
+        encoder: &Encoder,
+        pts_ns: u64,
+        evdi_timeout: Duration,
+    ) -> Result<()> {
         match self {
             Self::Wayland(c) => {
                 let timing = c.capture_frame()?;
@@ -62,16 +71,12 @@ impl FrameSource<'_> {
                     dmabuf.planes[0].offset,
                     dmabuf.planes[0].stride,
                     pts_ns,
-                )?;
-                Ok(true)
+                )
             }
             Self::Evdi(e) => {
-                let Some(_timing) = e.capture_frame()? else {
-                    return Ok(false);
-                };
+                let _ = e.capture_frame(evdi_timeout)?;
                 let stride = e.stride()?;
-                encoder.push_frame_bytes(e.bytes()?, stride, pts_ns)?;
-                Ok(true)
+                encoder.push_frame_bytes(e.bytes()?, stride, pts_ns)
             }
         }
     }
@@ -320,16 +325,38 @@ pub fn run(serial: &str, config: &Config, shutdown: &AtomicBool) -> Result<()> {
     };
 
     let frame_duration_ns = 1_000_000_000u64 / u64::from(config.fps);
+    let frame_duration = Duration::from_nanos(frame_duration_ns);
+    // Budgeted against the tick, not the old fixed 150ms: on evdi, waiting
+    // for a fresher frame competes with the tick's own deadline. Half the
+    // interval leaves room for encode+push, and reusing a ~1-tick-stale
+    // frame on a miss is imperceptible at a real frame rate -- constant
+    // cadence matters more here than always having the very latest pixels.
+    let evdi_timeout =
+        (frame_duration / 2).clamp(Duration::from_millis(2), Duration::from_millis(50));
     let mut index = 0u64;
+    let mut next_tick = Instant::now();
     let result = (|| -> Result<()> {
         while !shutdown.load(Ordering::Relaxed) {
-            if frame_source.capture_and_push(&encoder, index * frame_duration_ns)? {
-                index += 1;
-            }
+            frame_source.capture_and_push(&encoder, index * frame_duration_ns, evdi_timeout)?;
+            index += 1;
 
             while let Ok((data, pts, keyframe)) = packet_rx.try_recv() {
                 sent_at.lock().unwrap().push_back(Instant::now());
                 sender.send_frame(&data, pts, keyframe)?;
+            }
+
+            // Constant-rate pacing. On evdi this is what actually produces a
+            // steady output instead of one frame per real repaint; on
+            // Wayland it just caps an otherwise-uncapped capture loop at the
+            // configured rate, which it never was before. If something
+            // (a stall, a slow encode) put us more than a full interval
+            // behind, resync to now instead of bursting frames to catch up.
+            next_tick += frame_duration;
+            let now = Instant::now();
+            if now < next_tick {
+                std::thread::sleep(next_tick - now);
+            } else if now > next_tick + frame_duration {
+                next_tick = now;
             }
         }
         Ok(())

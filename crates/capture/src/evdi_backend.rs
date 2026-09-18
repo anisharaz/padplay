@@ -43,7 +43,12 @@ const AWAIT_MODE_TIMEOUT: Duration = Duration::from_millis(2000);
 /// median capture latency 9.7ms. 5000ms measured 5 total captures in the
 /// same window. The fix is entirely about retry granularity, not about the
 /// underlying request/notify path getting faster.
-const UPDATE_TIMEOUT: Duration = Duration::from_millis(150);
+///
+/// That measurement was against an unpaced tight loop (`evdi_probe`), which
+/// is still what this constant is for. `daemon::session`'s real capture loop
+/// is paced to a target frame rate instead and picks its own, usually
+/// tighter, per-tick timeout — see [`EvdiOutput::capture_frame`].
+pub const PROBE_UPDATE_TIMEOUT: Duration = Duration::from_millis(150);
 
 /// One CVT reduced-blanking timing, computed for a given resolution/refresh.
 ///
@@ -404,14 +409,20 @@ impl EvdiOutput {
     /// has the same property but surfaces it by simply blocking rather than
     /// erroring; evdi's `request_update` needs an explicit timeout, so the
     /// caller has to interpret it instead.
-    pub fn capture_frame(&mut self) -> Result<Option<EvdiFrameTiming>> {
+    ///
+    /// `timeout` is the caller's to choose rather than fixed internally:
+    /// a constant-frame-rate loop budgets this against its own tick
+    /// interval (see `daemon::session`), which is a different, usually
+    /// much tighter, constraint than the "give it a real chance to
+    /// arrive" 150ms `evdi_probe` wants for its own unpaced stress test.
+    pub fn capture_frame(&mut self, timeout: Duration) -> Result<Option<EvdiFrameTiming>> {
         use evdi::events::AwaitEventError;
         use evdi::handle::RequestUpdateError;
 
         let started = std::time::Instant::now();
         match self
             .rt
-            .block_on(self.handle.request_update(self.buffer_id, UPDATE_TIMEOUT))
+            .block_on(self.handle.request_update(self.buffer_id, timeout))
         {
             Ok(()) => Ok(Some(EvdiFrameTiming {
                 latency: started.elapsed(),

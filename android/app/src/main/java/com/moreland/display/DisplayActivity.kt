@@ -60,17 +60,25 @@ class DisplayActivity : Activity(), SurfaceHolder.Callback {
 
         val root = FrameLayout(this).apply { setBackgroundColor(Color.parseColor("#0D1117")) }
 
+        // displayView (and the SurfaceView inside it) is added first and its
+        // own visibility is never touched after this — a View.GONE
+        // SurfaceView never gets a Surface at all, so toggling it to hide
+        // Display mode meant awaitSurface() in VideoStream just timed out
+        // the moment a host actually connected. Home mode is instead a
+        // separate, fully opaque view stacked *on top*, shown/hidden on its
+        // own — the SurfaceView underneath stays alive and surfaced the
+        // entire time regardless of which mode is visible.
         displayView = FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
             surfaceView = SurfaceView(this@DisplayActivity)
             addView(surfaceView, FrameLayout.LayoutParams(MATCH, MATCH))
         }
         stats = StatsWidget(this, displayView as FrameLayout)
+        root.addView(displayView, FrameLayout.LayoutParams(MATCH, MATCH))
 
         homeView = buildHomeView()
-
         root.addView(homeView, FrameLayout.LayoutParams(MATCH, MATCH))
-        root.addView(displayView, FrameLayout.LayoutParams(MATCH, MATCH))
+
         setContentView(root)
 
         surfaceView.holder.addCallback(this)
@@ -139,14 +147,18 @@ class DisplayActivity : Activity(), SurfaceHolder.Callback {
         }
 
         return FrameLayout(this).apply {
+            // Opaque: this sits directly on top of displayView's SurfaceView
+            // in the stack, and needs to fully hide it while shown.
+            setBackgroundColor(Color.parseColor("#0D1117"))
             addView(column, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.CENTER))
         }
     }
 
+    /** Only ever touches `homeView`'s visibility — see the comment on
+     * `displayView`'s construction in [onCreate] for why. */
     private fun setMode(newMode: Mode) {
         mode = newMode
         homeView.visibility = if (newMode == Mode.HOME) View.VISIBLE else View.GONE
-        displayView.visibility = if (newMode == Mode.DISPLAY) View.VISIBLE else View.GONE
         if (newMode == Mode.DISPLAY) goImmersive() else exitImmersive()
     }
 

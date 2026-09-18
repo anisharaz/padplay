@@ -63,7 +63,7 @@ fn main() -> Result<()> {
     let mut misses = 0u32;
     let mut latencies = Vec::new();
     while started.elapsed() < run_for {
-        match output.capture_frame()? {
+        match output.capture_frame(capture::evdi_backend::PROBE_UPDATE_TIMEOUT)? {
             Some(timing) => {
                 hits += 1;
                 latencies.push(timing.latency);
