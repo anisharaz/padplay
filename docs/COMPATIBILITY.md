@@ -1,38 +1,41 @@
 # Compatibility
 
-**Verified working on exactly one setup.** Everything else below is an
-assessment of what would be required, not a claim that it works. KDE Plasma has
-since been tested and is **verified blocked** — the reasons are recorded below.
-labwc has a backend contributed and used by its author, untested by the
-maintainer. GNOME and Sway remain untested.
+**Verified working on two setups: Hyprland (the original) and niri.**
+Everything else below is an assessment of what would be required, not a claim
+that it works. KDE Plasma has been tested and is **verified blocked** — the
+reasons are recorded below. labwc has a backend contributed and used by its
+author, untested by the maintainer. GNOME and Sway remain untested.
 
 Run [`scripts/moreland-doctor.sh`](../scripts/moreland-doctor.sh) to get this
-answer for your own machine: it checks the compositor, the capture protocol,
-the VA-API encoder and the ADB link, and names what blocks you.
+answer for your own machine: it checks the compositor, the capture path, the
+VA-API encoder and the ADB link, and names what blocks you.
 
 ## Verified
 
 | | |
 |---|---|
-| Compositor | Hyprland 0.56.2 |
+| Compositor | Hyprland 0.56.2, niri 25.08+ |
 | GPU | AMD Cezanne / Vega (VCN 2.x), VA-API |
 | Host OS | Arch / EndeavourOS |
 | Android client | Android 14 / API 34 |
 
 ## What is actually compositor-specific
 
-Less than you would expect. Three of the four pipeline stages are portable:
+Less than you would expect on a compositor implementing `ext-image-copy-capture-v1`.
+Three of the four pipeline stages are portable there:
 
 | Stage | Portability |
 |---|---|
-| Capture | `ext-image-copy-capture-v1` — a **standard** staging protocol, not wlroots-specific |
+| Capture | `ext-image-copy-capture-v1` — a **standard** staging protocol, not wlroots-specific; niri uses evdi instead (see below) |
 | Encode | VA-API via GStreamer — any GPU with a VA driver; modifiers are probed at runtime |
 | Transport | ADB — identical everywhere |
 | **Virtual output creation** | **compositor-specific — this is the whole problem** |
 
 The compositor dependency is isolated in `crates/daemon/src/output.rs`, and the
 interface is one idea: *create a headless output with this name and mode, and
-remove it later*. Adding a compositor means implementing that and nothing else.
+remove it later*. Adding a compositor means implementing that and nothing else
+— unless, like niri, it also lacks a capture protocol, in which case capture
+has to move too (see the niri section below).
 
 ## Per-compositor assessment
 
@@ -49,6 +52,69 @@ That matters more than it sounds: the unnamed form allocates `HEADLESS-N` from
 a counter that persists across creates and never resets, so any code guessing
 the name is a latent bug. This avoids relying on automatically allocated
 output names.
+
+### niri — works, via evdi
+
+As of 26.04, niri implements neither `ext-image-copy-capture-v1` nor
+`zwlr_screencopy_manager_v1`:
+
+```console
+$ wayland-info | grep -E 'image_copy_capture|screencopy'
+$
+```
+
+So this compositor needs a different answer for *both* halves of the problem
+this document is otherwise organized around — not just output creation, but
+capture too. Both are solved the same way: [`evdi`](https://github.com/DisplayLink/evdi),
+the kernel driver DisplayLink docks use, creates a **real DRM device** that
+niri mode-sets exactly like a physical monitor plugged in over DisplayPort —
+no capture protocol needed, because nothing is being captured from niri's
+perspective. It hands frames back through its own kernel API instead of a
+Wayland protocol.
+
+```bash
+# one-time setup: load the module and grant this user its device node
+sudo modprobe evdi
+sudo udevadm control --reload && sudo udevadm trigger
+
+moreland   # detects niri via NIRI_SOCKET + a live `niri msg outputs` round-trip
+```
+
+What this costs, relative to the `ext-image-copy-capture-v1` path:
+
+- **A synthesized EDID**, built from scratch per VESA's CVT reduced-blanking
+  algorithm (cross-checked against the Linux kernel's own `drm_cvt_mode`) —
+  evdi requires the caller to supply one; it does not synthesize timings
+  itself. See `crates/capture/src/evdi_backend/edid.rs`.
+- **CPU-mapped bytes instead of a DMA-BUF.** evdi's buffer API only exposes
+  `Buffer::bytes()`, so this path takes the CPU-copy fallback the DMA-BUF
+  importer already has for other reasons (see `dmabuf.rs`), rather than the
+  zero-copy import Hyprland gets. Fast enough in practice — the constant
+  60fps target holds — but not zero-copy.
+- **A two-step connect.** The connector name is the kernel's to assign
+  (typically `DVI-I-N`) and only becomes known *after* niri mode-sets it, so
+  the daemon connects, diffs `wlr-randr`'s output list to discover the new
+  name, positions it, and only then registers evdi's frame buffer —
+  registering it before that final positioning leaves it pointing at a
+  mapping niri's own modeset has already invalidated (`EFAULT` on every
+  subsequent read). See `EvdiOutput::connect` / `PendingEvdiOutput::finish`
+  in `crates/capture/src/evdi_backend/mod.rs` for the full sequence and why
+  the split exists.
+- **`wlr-randr` is a runtime dependency**, used to position the output
+  (niri's own default placement for a newly connected monitor is not
+  configurable at connect time) and to discover the connector name.
+
+Unlike labwc, niri *is* something the daemon creates and tears down itself:
+dropping `EvdiOutput` unregisters the buffer and disconnects the evdi handle,
+which the kernel reports to niri as a monitor unplug — no `hyprctl output
+remove`-equivalent call needed, because there is nothing left running that a
+protocol message would need to tell to disconnect.
+
+A static `output "DVI-I-1" { position x=... y=... }` block in niri's own KDL
+config (`~/.config/niri/config.d/`) is worth adding alongside this — it gives
+niri's *initial* placement of the not-yet-existing output a sensible default,
+which matters because the very first connect on a session sees that default
+placement briefly before the daemon's own `wlr-randr` reposition call lands.
 
 ### Sway and wlroots compositors — likely straightforward, unimplemented
 
@@ -281,8 +347,10 @@ for whatever is missing.
 
 1. Confirm the capture protocols exist: `scripts/moreland-doctor.sh`, or by
    hand with `wayland-info | grep -E 'image_copy_capture|image_capture_source'`.
-   If they are absent, stop — the work is a PipeWire capture backend, not a
-   compositor backend, and `output.rs` is not where it goes.
+   If they are absent, there are two ways forward, not one: evdi (see the niri
+   section above) if the compositor mode-sets DRM outputs like a normal
+   monitor, or a PipeWire capture backend if it does not. Either way,
+   `output.rs` alone is no longer enough — capture has to move too.
 2. Add a variant to `Compositor` in `crates/daemon/src/output.rs` and detect it
    from the environment
 3. Implement create/remove for it

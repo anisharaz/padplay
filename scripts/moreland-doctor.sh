@@ -42,6 +42,8 @@ elif { [ "${XDG_CURRENT_DESKTOP:-}" = "labwc" ] \
        || [ "${XDG_CURRENT_DESKTOP:-}" = "wlroots" ]; } \
      && wlr-randr >/dev/null 2>&1; then
     COMPOSITOR="labwc"
+elif [ -n "${NIRI_SOCKET:-}" ] && niri msg outputs >/dev/null 2>&1; then
+    COMPOSITOR="niri"
 fi
 
 case "$COMPOSITOR" in
@@ -52,6 +54,11 @@ case "$COMPOSITOR" in
               info "labwc cannot create an output at runtime. Start it with"
               info "WLR_HEADLESS_OUTPUTS=1 and pass the name wlr-randr lists"
               info "(usually HEADLESS-1) as: moreland --output-name HEADLESS-1" ;;
+    niri)     pass "compositor: niri — supported, verified"
+              info "niri implements neither ext-image-copy-capture-v1 nor"
+              info "wlr-screencopy, so this path uses evdi instead: a real DRM"
+              info "device niri mode-sets like a physical monitor. Requires the"
+              info "evdi kernel module and wlr-randr. See docs/COMPATIBILITY.md." ;;
     *)        fail "compositor: ${XDG_CURRENT_DESKTOP:-unknown} — no virtual-output backend"
               block "no virtual-output backend for ${XDG_CURRENT_DESKTOP:-unknown}" ;;
 esac
@@ -63,45 +70,66 @@ if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && [ "$COMPOSITOR" != "Hyprland" ];
     info "inherit it. Reset with: systemctl --user import-environment"
 fi
 
-# ------------------------------------------------------- capture protocol ---
-head_ "Capture protocol (ext-image-copy-capture-v1)"
+if [ "$COMPOSITOR" = "niri" ]; then
+    # niri implements neither ext-image-copy-capture-v1 nor wlr-screencopy
+    # (as of 26.04), so this check would fail every time regardless of
+    # whether moreland can actually run — it uses evdi's own kernel API
+    # for capture instead, checked below rather than here.
+    head_ "Capture (evdi, since niri implements no Wayland capture protocol)"
 
-if ! command -v wayland-info >/dev/null 2>&1; then
-    warn "wayland-info not installed — cannot check (package: wayland-utils)"
+    if [ -e /dev/dri/card* ] && ls /sys/devices/virtual/misc/evdi* >/dev/null 2>&1; then
+        pass "evdi device node present"
+    else
+        fail "no evdi device node found"
+        block "evdi kernel module not loaded — see docs/ for one-time setup"
+    fi
+
+    if command -v wlr-randr >/dev/null 2>&1; then
+        pass "wlr-randr present (needed to position the evdi output)"
+    else
+        fail "wlr-randr not found"
+        block "wlr-randr is required on niri to position the evdi output"
+    fi
 else
-    PROTOCOLS=$(wayland-info 2>/dev/null | grep -oP "interface: '\K[^']+")
-    have() { printf '%s\n' "$PROTOCOLS" | grep -qx "$1"; }
+    head_ "Capture protocol (ext-image-copy-capture-v1)"
 
-    if have ext_image_copy_capture_manager_v1; then
-        pass "ext_image_copy_capture_manager_v1"
+    if ! command -v wayland-info >/dev/null 2>&1; then
+        warn "wayland-info not installed — cannot check (package: wayland-utils)"
     else
-        fail "ext_image_copy_capture_manager_v1 — ABSENT"
-        block "compositor does not implement ext-image-copy-capture-v1"
-    fi
+        PROTOCOLS=$(wayland-info 2>/dev/null | grep -oP "interface: '\K[^']+")
+        have() { printf '%s\n' "$PROTOCOLS" | grep -qx "$1"; }
 
-    if have ext_output_image_capture_source_manager_v1; then
-        pass "ext_output_image_capture_source_manager_v1"
-    else
-        fail "ext_output_image_capture_source_manager_v1 — ABSENT"
-    fi
+        if have ext_image_copy_capture_manager_v1; then
+            pass "ext_image_copy_capture_manager_v1"
+        else
+            fail "ext_image_copy_capture_manager_v1 — ABSENT"
+            block "compositor does not implement ext-image-copy-capture-v1"
+        fi
 
-    if have zwp_linux_dmabuf_v1; then
-        pass "zwp_linux_dmabuf_v1 (zero-copy import)"
-    else
-        fail "zwp_linux_dmabuf_v1 — ABSENT"
-        block "no linux-dmabuf; the zero-copy path cannot work"
-    fi
+        if have ext_output_image_capture_source_manager_v1; then
+            pass "ext_output_image_capture_source_manager_v1"
+        else
+            fail "ext_output_image_capture_source_manager_v1 — ABSENT"
+        fi
 
-    # KWin exposes capture only through its own privileged protocol, so it
-    # never appears in a plain registry listing. Say so rather than leaving
-    # the absence above looking like a packaging fault.
-    if [ "${XDG_CURRENT_DESKTOP:-}" = "KDE" ]; then
-        info ""
-        info "KWin implements neither the ext- nor the wlr- capture protocols,"
-        info "and KDE has declined to (bug 513785). It exposes capture through"
-        info "zkde_screencast_unstable_v1 instead, whose stream_virtual_output"
-        info "returns a virtual output AND its PipeWire stream in one call."
-        info "See docs/06-plasma-backend.md."
+        if have zwp_linux_dmabuf_v1; then
+            pass "zwp_linux_dmabuf_v1 (zero-copy import)"
+        else
+            fail "zwp_linux_dmabuf_v1 — ABSENT"
+            block "no linux-dmabuf; the zero-copy path cannot work"
+        fi
+
+        # KWin exposes capture only through its own privileged protocol, so it
+        # never appears in a plain registry listing. Say so rather than leaving
+        # the absence above looking like a packaging fault.
+        if [ "${XDG_CURRENT_DESKTOP:-}" = "KDE" ]; then
+            info ""
+            info "KWin implements neither the ext- nor the wlr- capture protocols,"
+            info "and KDE has declined to (bug 513785). It exposes capture through"
+            info "zkde_screencast_unstable_v1 instead, whose stream_virtual_output"
+            info "returns a virtual output AND its PipeWire stream in one call."
+            info "See docs/06-plasma-backend.md."
+        fi
     fi
 fi
 
