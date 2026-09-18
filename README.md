@@ -1,25 +1,51 @@
 # Moreland
 
 **Use an Android tablet as a second monitor on Linux/Wayland, over USB.**
-An alternative for Hyprland - wired, not wireless.
+Wired, not wireless.
 
 Plug the tablet in and a virtual monitor appears. Unplug it and the monitor
-disappears. Wayland-native, hardware-encoded, zero-copy - no VNC, no RDP, no X11.
+disappears. Wayland-native, hardware-encoded, zero-copy on Hyprland - no VNC,
+no RDP, no X11.
 
-<sub>_More land: more screen real estate. And it lives next door to Wayland and
-Hyprland._</sub>
+<sub>_More land: more screen real estate. And it lives next door to Wayland._</sub>
+
+> **This is a fork of [adiimanav/moreland](https://github.com/adiimanav/moreland),
+> maintained here at [anisharaz/padplay](https://github.com/anisharaz/padplay).**
+> Everything above the original's baseline stays credited to that project and
+> its contributors (Apache-2.0, license retained unmodified in
+> [LICENSE](LICENSE)). What this fork adds:
+>
+> - **niri support** - a second, independently-built compositor backend.
+>   niri implements neither `ext-image-copy-capture-v1` nor `wlr-screencopy`,
+>   so this isn't just another `output.rs` case: it creates and captures a
+>   virtual monitor through the `evdi` kernel driver instead (a synthesized
+>   EDID, CVT-RB timings computed from scratch, CPU-mapped frames rather than
+>   DMA-BUF). See [Compatibility](#compatibility) and
+>   [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md#niri--works-via-evdi).
+> - **Constant frame rate on the evdi path** - paced to a fixed tick instead
+>   of the damage-driven rate the Wayland capture path uses, so the tablet
+>   gets a steady image instead of variable cadence.
+> - **A redesigned Android app** - a proper Home/Display mode split instead of
+>   an always-immersive overlay, a restyled stats widget (animated, glanceable
+>   FPS/latency readout), and reliability fixes so the app survives repeated
+>   connect/disconnect cycles instead of needing to be relaunched.
+>
+> This repo also holds the Android app and the Linux daemon side by side
+> (`android/`, `crates/`) rather than as separate projects.
 
 ```
-~19 ms    host → rendered on tablet, median round trip at 120 fps
+~19 ms    host → rendered on tablet, median round trip at 120 fps (Hyprland)
 120 fps   at 1920x1200        (90 is the default; 144 saturates)
 16 Mbps   6% of the measured USB 2.0 ceiling
 0.6%      of one CPU core for capture
 ```
 
-> **Scope.** Verified on exactly one setup: Hyprland + AMD VA-API + a Xiaomi
-> Pad 6. Other GPUs are plausible and untested; other compositors need work.
-> See [Compatibility](#compatibility). Every number here is measured on that
-> hardware, not estimated - see [`docs/`](docs/) for how.
+> **Scope.** The Hyprland path above is verified on exactly one setup:
+> Hyprland + AMD VA-API + a Xiaomi Pad 6, and every number above is measured
+> on that hardware, not estimated - see [`docs/`](docs/) for how. The niri
+> path (evdi) is separately verified working, without the same latency
+> profiling done yet. Other GPUs are plausible and untested; other
+> compositors need work. See [Compatibility](#compatibility).
 
 Plug the cable in, and the tablet becomes a monitor - no pairing, no app to
 launch on the host, no settings dialog:
@@ -53,8 +79,8 @@ to have it silently not hold. See [Multi-GPU hosts](#multi-gpu-hosts).
 
 **Host**
 
-- Hyprland, or labwc with `wlr-randr` (see [Compatibility](#compatibility) for
-  others)
+- Hyprland, niri, or labwc with `wlr-randr` (see [Compatibility](#compatibility)
+  for others). niri additionally needs the `evdi` kernel module.
 - A GPU with VA-API encode - AMD, Intel, or NVIDIA via `nvidia-vaapi-driver`
 - `gstreamer`, `gst-plugins-base`, `gst-plugin-va`, `libva`
 - `android-tools` (adb), Rust toolchain
@@ -78,7 +104,7 @@ nothing here.
 ## Install
 
 ```bash
-git clone https://github.com/adiimanav/moreland.git moreland && cd moreland
+git clone git@github.com:anisharaz/padplay.git moreland && cd moreland
 ./install.sh
 ```
 
@@ -241,6 +267,7 @@ terminals, and browsing; it is not fine for gaming or stylus work.
 |                       | Status                                                                                              |
 | --------------------- | --------------------------------------------------------------------------------------------------- |
 | **Hyprland**          | Verified, including 0.56's Lua config parser (see below)                                            |
+| **niri**              | Verified, via the `evdi` kernel driver - niri implements neither `ext-image-copy-capture-v1` nor `wlr-screencopy`, so this backend creates and captures the virtual output through evdi instead of Wayland protocols ([details](docs/COMPATIBILITY.md#niri--works-via-evdi)) |
 | labwc                 | Works, contributed and used by its author, untested here - you create the headless output, moreland attaches to it ([details](docs/COMPATIBILITY.md#labwc--works-with-the-output-created-by-you)) |
 | Sway / other wlroots  | Capture should work unchanged; output creation unimplemented                                        |
 | KDE Plasma (KWin)     | **Blocked, tested on KWin 6.7.4** - implements no `ext-`/`wlr-` capture protocol; needs a PipeWire backend |
@@ -265,8 +292,10 @@ is compositor-specific: creating the headless output. Capture uses that standard
 protocol, encoding uses VA-API, transport uses ADB - so adding such a compositor
 means implementing create/remove in
 [`crates/daemon/src/output.rs`](crates/daemon/src/output.rs) and nothing else.
-A compositor *without* the protocol - KDE, GNOME - is a much larger job: a
-second, PipeWire-based capture backend.
+A compositor *without* the protocol needs a second capture path too - niri
+solves that with the `evdi` kernel driver (see above); KDE and GNOME would
+need a PipeWire-based backend instead, since neither mode-sets a DRM device
+the way niri does for evdi.
 
 ### Hyprland's Lua config parser
 
@@ -298,11 +327,13 @@ so it is harmless while the tablet is unplugged.
   would add absolute-pointer input without root; true multi-touch needs `uinput`.
 - **The app must stay foregrounded.** Switching apps on the tablet stops the stream.
 - **No audio.** Video only.
-- **Idle output drops to ~1 fps.** Correct, not a bug: Hyprland does not render a
-  static headless output, so a motionless screen costs almost nothing. It jumps
-  straight back to the configured rate on damage. Worth knowing when
-  benchmarking: measuring against an empty virtual output reports the idle rate,
-  not the pipeline's.
+- **Idle output drops to ~1 fps on Hyprland/labwc.** Correct, not a bug: those
+  compositors do not render a static headless output, so a motionless screen
+  costs almost nothing, and it jumps straight back to the configured rate on
+  damage. Worth knowing when benchmarking: measuring against an empty virtual
+  output reports the idle rate, not the pipeline's. The niri/evdi path is the
+  opposite - it holds a constant frame rate whether the screen is changing or
+  not, since evdi has no damage-tracking equivalent to lean on.
 - **Mild softness** from upscaling and H.264 on dark backgrounds. Raise
   `--bitrate` or `--max-width` if it bothers you.
 - **Resizing the virtual output mid-session** restarts the pipeline - the encoder
@@ -377,11 +408,13 @@ Full inventory in [`docs/REVERT.md`](docs/REVERT.md).
 
 Especially wanted:
 
-- **Compositor backends** - Sway is the smallest step (labwc is done); KWin the
-  most requested
+- **Compositor backends** - Sway is the smallest step (labwc and niri are
+  done); KWin the most requested
 - **A portal/PipeWire capture backend**, which would make GNOME and KDE work at once
 - **Intel and NVIDIA reports**, positive or negative
 - **Touch input** via `zwlr_virtual_pointer_v1`
+- **Latency measurements on the niri/evdi path** - the numbers in
+  [Performance](#performance) are Hyprland-only so far
 
 Please include your compositor, GPU, driver version, and tablet model. A
 documented failure is more useful than silence.
