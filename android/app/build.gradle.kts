@@ -13,8 +13,8 @@ android {
         // target tablet is API 34.
         minSdk = 29
         targetSdk = 34
-        versionCode = 5
-        versionName = "0.4.0"
+        versionCode = 6
+        versionName = "0.4.1"
     }
 
     buildTypes {
@@ -33,5 +33,15 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+    }
+
+    lint {
+        // Lint suggests merging mipmap-anydpi-v26 into a bare mipmap-anydpi
+        // since minSdk 29 already implies v26+. That folder name doesn't
+        // actually resolve for this AGP/AAPT2 version -- verified by trying
+        // it, not by assumption -- so keep the working -v26 qualifier and
+        // suppress the suggestion rather than ship a build that only works
+        // by accident.
+        disable += "ObsoleteSdkInt"
     }
 }

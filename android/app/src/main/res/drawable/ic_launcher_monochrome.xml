@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Single-color silhouette of ic_launcher_foreground, for Android 13+
+     themed icons: the OS applies its own tint over whatever color is
+     here, so it's drawn in a flat, fully-opaque color rather than reusing
+     the brand palette. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M22,26h64v42h-64z"
+        android:fillColor="#FFFFFF" />
+    <path
+        android:pathData="M28,32h52v30h-52z"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M48,68h12v10h-12z"
+        android:fillColor="#FFFFFF" />
+    <path
+        android:pathData="M38,78h32v6h-32z"
+        android:fillColor="#FFFFFF" />
+    <path
+        android:pathData="M66,40 A6,6 0 1 0 78,40 A6,6 0 1 0 66,40 Z"
+        android:fillColor="#FFFFFF" />
+</vector>
