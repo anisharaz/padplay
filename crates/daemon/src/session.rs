@@ -25,7 +25,11 @@ const APP_ACTIVITY: &str = "com.moreland.display/.DisplayActivity";
 /// interesting logic already lives in `capture_and_push` rather than in
 /// per-backend impls of some shared method.
 enum FrameSource<'a> {
-    Wayland(Capture),
+    // Boxed: Capture is over 600 bytes (its buffer pool and Wayland proxy
+    // objects), against Evdi's 8-byte reference -- unboxed, the enum (held
+    // as a plain value for the session's whole life) would pay Wayland's
+    // size on the Evdi path too.
+    Wayland(Box<Capture>),
     Evdi(&'a mut EvdiOutput),
 }
 
@@ -228,7 +232,7 @@ pub fn run(serial: &str, config: &Config, shutdown: &AtomicBool) -> Result<()> {
         // assuming; the accepted modifier set is GPU-vendor specific.
         let allowed_modifiers = encoder::supported_modifiers(capture::XR24);
         tracing::debug!("encoder accepts modifiers {allowed_modifiers:02x?}");
-        FrameSource::Wayland(Capture::new(
+        FrameSource::Wayland(Box::new(Capture::new(
             &output_name,
             &CaptureConfig {
                 mode: BufferMode::Dmabuf,
@@ -236,7 +240,7 @@ pub fn run(serial: &str, config: &Config, shutdown: &AtomicBool) -> Result<()> {
                 allowed_modifiers,
                 paint_cursor: config.paint_cursor,
             },
-        )?)
+        )?))
     };
 
     let width = frame_source.width();

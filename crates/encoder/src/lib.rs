@@ -51,7 +51,7 @@ pub fn supported_modifiers(fourcc: u32) -> Vec<u64> {
                     let Ok(value) = structure.value("drm-format") else {
                         continue;
                     };
-                    collect_modifiers(&value, &wanted, &mut modifiers);
+                    collect_modifiers(value, &wanted, &mut modifiers);
                 }
             }
         }

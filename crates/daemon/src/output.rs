@@ -314,7 +314,11 @@ pub enum VirtualOutput {
         name: String,
     },
     Evdi {
-        evdi: capture::evdi_backend::EvdiOutput,
+        // Boxed: EvdiOutput carries its own Tokio runtime and dwarfs
+        // `Managed`, and this enum is held as a plain value (not behind a
+        // pointer) for the session's whole life -- unboxed, every
+        // VirtualOutput would pay Evdi's size even on the Managed path.
+        evdi: Box<capture::evdi_backend::EvdiOutput>,
         name: String,
     },
 }
@@ -377,7 +381,7 @@ impl VirtualOutput {
                 // `PendingEvdiOutput::finish`.
                 let evdi = pending.finish().context("registering evdi frame buffer")?;
                 return Ok(Self::Evdi {
-                    evdi,
+                    evdi: Box::new(evdi),
                     name: discovered,
                 });
             }

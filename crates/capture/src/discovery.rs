@@ -68,21 +68,17 @@ impl Dispatch<wl_output::WlOutput, usize> for Discovery {
         match event {
             wl_output::Event::Name { name } => info.name = name,
             wl_output::Event::Description { description } => info.description = description,
+            // An output advertises every mode it supports; only the one
+            // flagged `current` describes what we would actually capture.
             wl_output::Event::Mode {
-                flags,
+                flags: WEnum::Value(flags),
                 width,
                 height,
                 refresh,
-            } => {
-                // An output advertises every mode it supports; only the one
-                // flagged `current` describes what we would actually capture.
-                if let WEnum::Value(flags) = flags {
-                    if flags.contains(wl_output::Mode::Current) {
-                        info.width = width;
-                        info.height = height;
-                        info.refresh_mhz = refresh;
-                    }
-                }
+            } if flags.contains(wl_output::Mode::Current) => {
+                info.width = width;
+                info.height = height;
+                info.refresh_mhz = refresh;
             }
             _ => {}
         }
