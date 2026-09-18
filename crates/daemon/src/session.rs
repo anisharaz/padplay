@@ -3,6 +3,7 @@
 //! One streaming session: virtual output -> capture -> encode -> USB -> tablet.
 
 use anyhow::{bail, Context, Result};
+use capture::evdi_backend::EvdiOutput;
 use capture::session::{BufferMode, Capture, CaptureConfig};
 use encoder::{Encoder, EncoderConfig};
 use std::collections::VecDeque;
@@ -17,6 +18,54 @@ use crate::output::VirtualOutput;
 
 const APP_PACKAGE: &str = "com.moreland.display";
 const APP_ACTIVITY: &str = "com.moreland.display/.DisplayActivity";
+
+/// Where captured frames come from — a Wayland capture protocol handing back
+/// DMA-BUF fds, or evdi handing back CPU-mapped bytes. Deliberately not a
+/// trait: the two push different buffer kinds into the encoder, so the
+/// interesting logic already lives in `capture_and_push` rather than in
+/// per-backend impls of some shared method.
+enum FrameSource<'a> {
+    Wayland(Capture),
+    Evdi(&'a mut EvdiOutput),
+}
+
+impl FrameSource<'_> {
+    fn width(&self) -> u32 {
+        match self {
+            Self::Wayland(c) => c.width,
+            Self::Evdi(e) => e.width(),
+        }
+    }
+
+    fn height(&self) -> u32 {
+        match self {
+            Self::Wayland(c) => c.height,
+            Self::Evdi(e) => e.height(),
+        }
+    }
+
+    fn capture_and_push(&mut self, encoder: &Encoder, pts_ns: u64) -> Result<()> {
+        match self {
+            Self::Wayland(c) => {
+                let timing = c.capture_frame()?;
+                let dmabuf = c
+                    .dmabuf(timing.buffer_index)
+                    .context("capture produced no DMA-BUF")?;
+                encoder.push_frame(
+                    dmabuf.planes[0].fd.as_fd(),
+                    dmabuf.planes[0].offset,
+                    dmabuf.planes[0].stride,
+                    pts_ns,
+                )
+            }
+            Self::Evdi(e) => {
+                e.capture_frame()?;
+                let stride = e.stride()?;
+                encoder.push_frame_bytes(e.bytes()?, stride, pts_ns)
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -98,7 +147,7 @@ pub fn run(serial: &str, config: &Config, shutdown: &AtomicBool) -> Result<()> {
         }
     };
 
-    let output = VirtualOutput::create(
+    let mut output = VirtualOutput::create(
         &config.output_name,
         width,
         height,
@@ -147,35 +196,55 @@ pub fn run(serial: &str, config: &Config, shutdown: &AtomicBool) -> Result<()> {
         .context("launching the display app")?;
     std::thread::sleep(Duration::from_millis(2500));
 
-    // Probe what this machine's encoder can actually import rather than
-    // assuming; the accepted modifier set is GPU-vendor specific.
-    let allowed_modifiers = encoder::supported_modifiers(capture::XR24);
-    tracing::debug!("encoder accepts modifiers {allowed_modifiers:02x?}");
+    let output_name = output.name().to_string();
 
-    let mut capture = Capture::new(
-        output.name(),
-        &CaptureConfig {
-            mode: BufferMode::Dmabuf,
-            pool_size: 3,
-            allowed_modifiers,
-            paint_cursor: config.paint_cursor,
-        },
-    )?;
-    let encoder = Arc::new(Encoder::new(&EncoderConfig {
-        width: capture.width,
-        height: capture.height,
-        framerate: config.fps,
-        bitrate_kbps: config.bitrate_kbps,
-        fourcc: capture.format,
-        modifier: capture.modifier.unwrap_or(0),
-        ..Default::default()
-    })?);
+    // evdi's own handle already captures frames — a separate Wayland capture
+    // session neither exists for it nor is needed. Everything else
+    // (Hyprland, labwc) still goes through `capture::session::Capture`.
+    let mut frame_source = if let Some(evdi) = output.evdi_mut() {
+        FrameSource::Evdi(evdi)
+    } else {
+        // Probe what this machine's encoder can actually import rather than
+        // assuming; the accepted modifier set is GPU-vendor specific.
+        let allowed_modifiers = encoder::supported_modifiers(capture::XR24);
+        tracing::debug!("encoder accepts modifiers {allowed_modifiers:02x?}");
+        FrameSource::Wayland(Capture::new(
+            &output_name,
+            &CaptureConfig {
+                mode: BufferMode::Dmabuf,
+                pool_size: 3,
+                allowed_modifiers,
+                paint_cursor: config.paint_cursor,
+            },
+        )?)
+    };
 
-    let mut sender = Sender::connect(
-        port,
-        &stream_header(capture.width, capture.height, config.fps),
-    )
-    .context("connecting to the app — is it in the foreground on the tablet?")?;
+    let width = frame_source.width();
+    let height = frame_source.height();
+
+    let encoder = Arc::new(match &frame_source {
+        FrameSource::Wayland(c) => Encoder::new(&EncoderConfig {
+            width,
+            height,
+            framerate: config.fps,
+            bitrate_kbps: config.bitrate_kbps,
+            fourcc: c.format,
+            modifier: c.modifier.unwrap_or(0),
+            ..Default::default()
+        })?,
+        // No DMA-BUF, so no format/modifier to negotiate — `new_cpu` fixes
+        // the source format at `BGRx` (evdi's own pixel format) instead.
+        FrameSource::Evdi(_) => Encoder::new_cpu(&EncoderConfig {
+            width,
+            height,
+            framerate: config.fps,
+            bitrate_kbps: config.bitrate_kbps,
+            ..Default::default()
+        })?,
+    });
+
+    let mut sender = Sender::connect(port, &stream_header(width, height, config.fps))
+        .context("connecting to the app — is it in the foreground on the tablet?")?;
     tracing::info!("streaming to {serial}");
 
     let running = Arc::new(AtomicBool::new(true));
@@ -239,11 +308,7 @@ pub fn run(serial: &str, config: &Config, shutdown: &AtomicBool) -> Result<()> {
     let mut index = 0u64;
     let result = (|| -> Result<()> {
         while !shutdown.load(Ordering::Relaxed) {
-            let timing = capture.capture_frame()?;
-            let dmabuf = capture
-                .dmabuf(timing.buffer_index)
-                .context("capture produced no DMA-BUF")?;
-            encoder.push_frame(dmabuf.planes[0].fd.as_fd(), dmabuf.planes[0].offset, dmabuf.planes[0].stride, index * frame_duration_ns)?;
+            frame_source.capture_and_push(&encoder, index * frame_duration_ns)?;
             index += 1;
 
             while let Ok((data, pts, keyframe)) = packet_rx.try_recv() {

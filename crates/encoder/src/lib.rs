@@ -158,10 +158,93 @@ pub struct Encoder {
     pipeline: gst::Pipeline,
     appsrc: AppSrc,
     appsink: AppSink,
-    allocator: DmaBufAllocator,
+    allocator: Option<DmaBufAllocator>,
     frame_size: usize,
     width: u32,
     height: u32,
+}
+
+/// Build everything from `vapostproc` onward — identical whether the source
+/// is a DMA-BUF or a plain CPU buffer, since `vapostproc` accepts both and
+/// converts either into the `NV12`/`VAMemory` the encoder wants.
+fn build_tail(
+    pipeline: &gst::Pipeline,
+    appsrc: gst::Element,
+    config: &EncoderConfig,
+) -> Result<(AppSrc, AppSink)> {
+    let postproc = gst::ElementFactory::make("vapostproc")
+        .build()
+        .context("creating vapostproc")?;
+
+    let nv12_caps = gst::Caps::builder("video/x-raw")
+        .features(["memory:VAMemory"])
+        .field("format", "NV12")
+        .build();
+    let capsfilter = gst::ElementFactory::make("capsfilter")
+        .property("caps", &nv12_caps)
+        .build()
+        .context("creating capsfilter")?;
+
+    let encoder = gst::ElementFactory::make("vah264enc")
+        .property_from_str("rate-control", &config.rate_control)
+        .property("bitrate", config.bitrate_kbps)
+        // A tight coded-picture buffer forces bits to be spread evenly,
+        // which is what keeps keyframe spikes bounded now that
+        // intra-refresh is unavailable through gst-plugin-va.
+        .property("cpb-size", config.bitrate_kbps / 2)
+        .property("b-frames", 0u32)
+        .property("ref-frames", 1u32)
+        .property("key-int-max", config.keyframe_interval)
+        .property("target-usage", config.target_usage)
+        .property("cabac", config.cabac)
+        .property("num-slices", config.num_slices)
+        .property("aud", true)
+        .build()
+        .context("creating vah264enc")?;
+
+    let parser = gst::ElementFactory::make("h264parse")
+        // -1 repeats SPS/PPS before every keyframe, so MediaCodec can
+        // configure itself from the stream without out-of-band csd.
+        .property("config-interval", -1i32)
+        .build()
+        .context("creating h264parse")?;
+
+    let parsed_caps = gst::Caps::builder("video/x-h264")
+        .field("stream-format", "byte-stream")
+        .field("alignment", "au")
+        .build();
+    let parsed_filter = gst::ElementFactory::make("capsfilter")
+        .property("caps", &parsed_caps)
+        .build()
+        .context("creating h264 capsfilter")?;
+
+    let appsink = gst::ElementFactory::make("appsink")
+        .property("sync", false)
+        .property("max-buffers", 4u32)
+        .property("drop", false)
+        .build()
+        .context("creating appsink")?;
+
+    let elements = [
+        &appsrc,
+        &postproc,
+        &capsfilter,
+        &encoder,
+        &parser,
+        &parsed_filter,
+        &appsink,
+    ];
+    pipeline.add_many(elements).context("adding elements")?;
+    gst::Element::link_many(elements).context("linking pipeline")?;
+
+    let appsrc = appsrc.dynamic_cast::<AppSrc>().unwrap();
+    let appsink = appsink.dynamic_cast::<AppSink>().unwrap();
+
+    pipeline
+        .set_state(gst::State::Playing)
+        .context("starting pipeline")?;
+
+    Ok((appsrc, appsink))
 }
 
 impl Encoder {
@@ -200,85 +283,59 @@ impl Encoder {
             .build()
             .context("creating appsrc")?;
 
-        let postproc = gst::ElementFactory::make("vapostproc")
-            .build()
-            .context("creating vapostproc")?;
-
-        let nv12_caps = gst::Caps::builder("video/x-raw")
-            .features(["memory:VAMemory"])
-            .field("format", "NV12")
-            .build();
-        let capsfilter = gst::ElementFactory::make("capsfilter")
-            .property("caps", &nv12_caps)
-            .build()
-            .context("creating capsfilter")?;
-
-        let encoder = gst::ElementFactory::make("vah264enc")
-            .property_from_str("rate-control", &config.rate_control)
-            .property("bitrate", config.bitrate_kbps)
-            // A tight coded-picture buffer forces bits to be spread evenly,
-            // which is what keeps keyframe spikes bounded now that
-            // intra-refresh is unavailable through gst-plugin-va.
-            .property("cpb-size", config.bitrate_kbps / 2)
-            .property("b-frames", 0u32)
-            .property("ref-frames", 1u32)
-            .property("key-int-max", config.keyframe_interval)
-            .property("target-usage", config.target_usage)
-            .property("cabac", config.cabac)
-            .property("num-slices", config.num_slices)
-            .property("aud", true)
-            .build()
-            .context("creating vah264enc")?;
-
-        let parser = gst::ElementFactory::make("h264parse")
-            // -1 repeats SPS/PPS before every keyframe, so MediaCodec can
-            // configure itself from the stream without out-of-band csd.
-            .property("config-interval", -1i32)
-            .build()
-            .context("creating h264parse")?;
-
-        let parsed_caps = gst::Caps::builder("video/x-h264")
-            .field("stream-format", "byte-stream")
-            .field("alignment", "au")
-            .build();
-        let parsed_filter = gst::ElementFactory::make("capsfilter")
-            .property("caps", &parsed_caps)
-            .build()
-            .context("creating h264 capsfilter")?;
-
-        let appsink = gst::ElementFactory::make("appsink")
-            .property("sync", false)
-            .property("max-buffers", 4u32)
-            .property("drop", false)
-            .build()
-            .context("creating appsink")?;
-
-        let elements = [
-            &appsrc,
-            &postproc,
-            &capsfilter,
-            &encoder,
-            &parser,
-            &parsed_filter,
-            &appsink,
-        ];
-        pipeline.add_many(elements).context("adding elements")?;
-        gst::Element::link_many(elements).context("linking pipeline")?;
-
-        let appsrc = appsrc.dynamic_cast::<AppSrc>().unwrap();
-        let appsink = appsink.dynamic_cast::<AppSink>().unwrap();
-
-        pipeline
-            .set_state(gst::State::Playing)
-            .context("starting pipeline")?;
+        let (appsrc, appsink) = build_tail(&pipeline, appsrc, config)?;
 
         Ok(Self {
             pipeline,
             appsrc,
             appsink,
-            allocator: DmaBufAllocator::new(),
+            allocator: Some(DmaBufAllocator::new()),
             // Conservative upper bound; the kernel clamps the mapping to the
             // real dmabuf size and tiled layouts are never larger than this.
+            frame_size: (config.width as usize) * (config.height as usize) * 4,
+            width: config.width,
+            height: config.height,
+        })
+    }
+
+    /// Same pipeline, minus the DMA-BUF-specific source caps — for backends
+    /// that only expose CPU-mapped pixels (evdi's `Buffer::bytes()`, not a
+    /// dmabuf fd). `vapostproc` uploads plain `video/x-raw` buffers to the
+    /// GPU itself, so nothing downstream of the source needs to know the
+    /// difference.
+    pub fn new_cpu(config: &EncoderConfig) -> Result<Self> {
+        gst::init().context("initialising GStreamer")?;
+
+        // XR24 (DRM_FORMAT_XRGB8888) is `BGRx` in GStreamer's raw-video
+        // naming — same byte layout, different naming convention.
+        let src_caps = gst::Caps::builder("video/x-raw")
+            .field("format", "BGRx")
+            .field("width", config.width as i32)
+            .field("height", config.height as i32)
+            .field(
+                "framerate",
+                gst::Fraction::new(config.framerate as i32, 1),
+            )
+            .build();
+
+        let pipeline = gst::Pipeline::new();
+
+        let appsrc = gst::ElementFactory::make("appsrc")
+            .property("caps", &src_caps)
+            .property_from_str("format", "time")
+            .property("is-live", true)
+            .property("max-buffers", 1u64)
+            .property_from_str("leaky-type", "downstream")
+            .build()
+            .context("creating appsrc")?;
+
+        let (appsrc, appsink) = build_tail(&pipeline, appsrc, config)?;
+
+        Ok(Self {
+            pipeline,
+            appsrc,
+            appsink,
+            allocator: None,
             frame_size: (config.width as usize) * (config.height as usize) * 4,
             width: config.width,
             height: config.height,
@@ -300,8 +357,12 @@ impl Encoder {
         let owned = fd
             .try_clone_to_owned()
             .context("duplicating DMA-BUF fd for the encoder")?;
+        let allocator = self
+            .allocator
+            .as_ref()
+            .context("push_frame called on an encoder built with new_cpu")?;
         let memory = unsafe {
-            self.allocator
+            allocator
                 .alloc_dmabuf(owned, self.frame_size)
                 .context("wrapping DMA-BUF fd as GstMemory")?
         };
@@ -323,6 +384,35 @@ impl Encoder {
             .context("adding DMA-BUF VideoMeta")?;
 
             buffer.set_pts(gst::ClockTime::from_nseconds(pts_ns));
+        }
+
+        self.appsrc
+            .push_buffer(buffer)
+            .map_err(|e| anyhow::anyhow!("pushing buffer into appsrc: {e:?}"))?;
+        Ok(())
+    }
+
+    /// Submit a captured frame that only exists as CPU-mapped bytes (no
+    /// dmabuf fd available) — the path `evdi_backend::EvdiOutput` uses.
+    ///
+    /// Copies `bytes` into a new buffer: unlike a dmabuf fd, there is no
+    /// handle to take ownership of instead, and the caller's slice is only
+    /// valid until the next `request_update`.
+    pub fn push_frame_bytes(&self, bytes: &[u8], stride: u32, pts_ns: u64) -> Result<()> {
+        let mut buffer = gst::Buffer::from_mut_slice(bytes.to_vec());
+        {
+            let buffer_mut = buffer.get_mut().context("buffer has other references")?;
+            VideoMeta::add_full(
+                buffer_mut,
+                VideoFrameFlags::empty(),
+                VideoFormat::Bgrx,
+                self.width,
+                self.height,
+                &[0usize],
+                &[stride as i32],
+            )
+            .context("adding CPU frame VideoMeta")?;
+            buffer_mut.set_pts(gst::ClockTime::from_nseconds(pts_ns));
         }
 
         self.appsrc

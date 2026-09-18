@@ -17,6 +17,7 @@
 
 use anyhow::{bail, Context, Result};
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Compositor {
@@ -27,6 +28,15 @@ pub enum Compositor {
     /// runtime IPC to *create* an output, so the session attaches to one the
     /// compositor was started with. See `docs/COMPATIBILITY.md`.
     Labwc,
+    /// niri. It has no runtime IPC to create a headless output (unlike
+    /// Hyprland) and, as of 26.04, implements neither `ext-image-copy-capture-v1`
+    /// nor `wlr-screencopy-v1` — so this compositor doesn't just need a
+    /// different way to make an output, it needs a different way to capture
+    /// one too. Both are solved by evdi instead: it creates a real DRM device
+    /// niri mode-sets like a physical monitor, and hands back pixels through
+    /// its own kernel API rather than a Wayland capture protocol. See
+    /// `capture::evdi_backend` and `docs/COMPATIBILITY.md`.
+    Niri,
     Unsupported,
 }
 
@@ -65,6 +75,12 @@ impl Compositor {
         {
             return Compositor::Labwc;
         }
+        // Mirrors the other markers' pattern: a systemd user service can
+        // inherit NIRI_SOCKET from a session that has since exited, so it is
+        // confirmed with a live IPC round-trip rather than trusted alone.
+        if std::env::var_os("NIRI_SOCKET").is_some() && run("niri", &["msg", "outputs"]).is_ok() {
+            return Compositor::Niri;
+        }
         Compositor::Unsupported
     }
 
@@ -73,6 +89,7 @@ impl Compositor {
             Compositor::Hyprland => "Hyprland",
             Compositor::Sway => "Sway",
             Compositor::Labwc => "labwc",
+            Compositor::Niri => "niri",
             Compositor::Unsupported => "unsupported",
         }
     }
@@ -89,15 +106,17 @@ impl Compositor {
                  discover it. See docs/COMPATIBILITY.md."
             ),
             Compositor::Labwc => Ok(()),
+            Compositor::Niri => Ok(()),
             Compositor::Unsupported => {
                 let desktop =
                     std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_else(|_| "unset".to_string());
                 bail!(
                     "unsupported compositor (XDG_CURRENT_DESKTOP={desktop}).\n\
-                     This needs a compositor that can create a headless output \
-                     and implements ext-image-copy-capture-v1.\n\
-                     Verified: Hyprland. KDE Plasma and GNOME implement neither \
-                     and need a PipeWire capture backend first.\n\
+                     This needs a compositor that can create a headless output, \
+                     implements ext-image-copy-capture-v1, or has the evdi \
+                     kernel driver available (niri's path).\n\
+                     Verified: Hyprland, niri. KDE Plasma and GNOME implement \
+                     none of these and need a PipeWire capture backend first.\n\
                      Run scripts/moreland-doctor.sh for a full report, and see \
                      docs/COMPATIBILITY.md."
                 )
@@ -281,10 +300,23 @@ fn restore_hyprland_monitor_state(
     Ok(())
 }
 
-/// A headless output, removed when dropped.
-pub struct VirtualOutput {
-    compositor: Compositor,
-    name: String,
+/// A virtual output, torn down when dropped.
+///
+/// Two unrelated ways of getting one: `Managed` asks the compositor to create
+/// or lend us a headless output by a name we choose. `Evdi` creates a real
+/// DRM device instead, so the "name" is whatever the kernel assigns the
+/// connector — discovered after the fact, not chosen — and the same object
+/// also has to serve frames, since evdi's capture and output-creation are the
+/// same handle. See `capture::evdi_backend`.
+pub enum VirtualOutput {
+    Managed {
+        compositor: Compositor,
+        name: String,
+    },
+    Evdi {
+        evdi: capture::evdi_backend::EvdiOutput,
+        name: String,
+    },
 }
 
 impl VirtualOutput {
@@ -317,9 +349,29 @@ impl VirtualOutput {
                          See docs/COMPATIBILITY.md."
                     );
                 }
-                return Ok(Self {
+                return Ok(Self::Managed {
                     compositor,
                     name: name.to_string(),
+                });
+            }
+            Compositor::Niri => {
+                // The connector name is the kernel's to assign (typically
+                // `DVI-I-N`, from evdi's advertised connector type), not
+                // ours to request, so it has to be discovered by diffing
+                // wlr-randr's output list before and after — the same
+                // approach Sway's `create_output` would need (see the
+                // `Compositor::Sway` case above) for the same reason: no
+                // name comes back from the call that creates it.
+                let before = wlr_randr_output_names().unwrap_or_default();
+                let evdi = capture::evdi_backend::EvdiOutput::create(width, height, refresh)
+                    .context("creating evdi virtual output")?;
+                let discovered = discover_new_output(&before)
+                    .context("finding the evdi output in wlr-randr's output list")?;
+                position_output(&discovered, width, height, x, y)
+                    .context("positioning evdi output via wlr-randr")?;
+                return Ok(Self::Evdi {
+                    evdi,
+                    name: discovered,
                 });
             }
             Compositor::Hyprland => {
@@ -367,36 +419,114 @@ impl VirtualOutput {
             other => other.ensure_supported()?,
         }
         std::thread::sleep(std::time::Duration::from_millis(400));
-        Ok(Self {
+        Ok(Self::Managed {
             compositor,
             name: name.to_string(),
         })
     }
 
     pub fn name(&self) -> &str {
-        &self.name
+        match self {
+            Self::Managed { name, .. } | Self::Evdi { name, .. } => name,
+        }
     }
 
     /// Whether the requested mode and position were actually applied. False on
     /// labwc, where the output is the session's rather than ours and keeps
     /// whatever geometry it was configured with.
     pub fn applied_mode(&self) -> bool {
-        self.compositor != Compositor::Labwc
+        match self {
+            Self::Managed { compositor, .. } => *compositor != Compositor::Labwc,
+            Self::Evdi { .. } => true,
+        }
+    }
+
+    /// The evdi capture handle, on compositors using that backend — `None`
+    /// everywhere else, where frames come from `capture::session::Capture`
+    /// (a Wayland capture protocol) instead.
+    pub fn evdi_mut(&mut self) -> Option<&mut capture::evdi_backend::EvdiOutput> {
+        match self {
+            Self::Evdi { evdi, .. } => Some(evdi),
+            Self::Managed { .. } => None,
+        }
     }
 }
 
 impl Drop for VirtualOutput {
     fn drop(&mut self) {
-        let result = match self.compositor {
-            Compositor::Hyprland => run("hyprctl", &["output", "remove", &self.name]),
-            Compositor::Sway => run("swaymsg", &["output", &self.name, "unplug"]),
+        let (compositor, name) = match self {
+            // `EvdiOutput`'s own `Drop` unregisters the buffer and
+            // disconnects the handle, which the kernel reports to niri as a
+            // disconnect — same as unplugging a real monitor. Nothing else
+            // to do here.
+            Self::Evdi { .. } => return,
+            Self::Managed { compositor, name } => (*compositor, name),
+        };
+        let result = match compositor {
+            Compositor::Hyprland => run("hyprctl", &["output", "remove", name]),
+            Compositor::Sway => run("swaymsg", &["output", name, "unplug"]),
             // Never created here, so not ours to remove.
-            Compositor::Labwc => return,
-            Compositor::Unsupported => return,
+            Compositor::Labwc | Compositor::Niri | Compositor::Unsupported => return,
         };
         match result {
-            Ok(_) => tracing::debug!("removed output {}", self.name),
-            Err(e) => tracing::warn!("failed to remove output {}: {e}", self.name),
+            Ok(_) => tracing::debug!("removed output {name}"),
+            Err(e) => tracing::warn!("failed to remove output {name}: {e}"),
         }
     }
+}
+
+/// Every currently listed output name, first token of each un-indented line —
+/// same parsing `labwc_output_exists` uses.
+fn wlr_randr_output_names() -> Result<Vec<String>> {
+    let out = run("wlr-randr", &[])?;
+    Ok(out
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
+/// Poll `wlr-randr` until an output name appears that wasn't in `before`.
+///
+/// evdi's connector name is the kernel's to assign, so the only way to learn
+/// what a just-created device was called is to notice it show up.
+fn discover_new_output(before: &[String]) -> Result<String> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Ok(after) = wlr_randr_output_names() {
+            if let Some(new_name) = after.into_iter().find(|n| !before.contains(n)) {
+                return Ok(new_name);
+            }
+        }
+        if Instant::now() > deadline {
+            bail!(
+                "evdi output never appeared in wlr-randr's output list \
+                 within 5s; is niri running and watching for DRM hotplug?"
+            );
+        }
+        std::thread::sleep(Duration::from_millis(150));
+    }
+}
+
+/// Enable and position an output that already exists but isn't placed yet —
+/// evdi's connector mode-sets itself (see `evdi_backend::EvdiOutput::create`),
+/// but niri still puts a newly connected output wherever its own default
+/// layout picks, not where the tablet's session wants it.
+fn position_output(name: &str, width: u32, height: u32, x: i32, y: i32) -> Result<()> {
+    run(
+        "wlr-randr",
+        &[
+            "--output",
+            name,
+            "--on",
+            "--mode",
+            &format!("{width}x{height}"),
+            "--pos",
+            &format!("{x},{y}"),
+            "--scale",
+            "1.000000",
+        ],
+    )
+    .map(drop)
 }
