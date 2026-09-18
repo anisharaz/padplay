@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A monitor glyph with a "live" dot, since the whole point of the app is
+     turning a tablet into a second monitor, streaming. Kept to flat
+     rectangles and one circular arc rather than curved outlines: simple
+     enough to hand-author correctly as raw pathData, and it reads fine at
+     launcher-icon size. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Monitor bezel -->
+    <path
+        android:pathData="M22,26h64v42h-64z"
+        android:fillColor="@color/brand_accent" />
+    <!-- Screen -->
+    <path
+        android:pathData="M28,32h52v30h-52z"
+        android:fillColor="@color/brand_background" />
+    <!-- Stand -->
+    <path
+        android:pathData="M48,68h12v10h-12z"
+        android:fillColor="@color/brand_accent" />
+    <!-- Base -->
+    <path
+        android:pathData="M38,78h32v6h-32z"
+        android:fillColor="@color/brand_accent" />
+    <!-- Live dot, glowing against the dark screen -->
+    <path
+        android:pathData="M66,40 A6,6 0 1 0 78,40 A6,6 0 1 0 66,40 Z"
+        android:fillColor="@color/brand_accent" />
+</vector>

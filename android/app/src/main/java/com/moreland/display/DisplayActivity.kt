@@ -10,7 +10,6 @@ import android.view.SurfaceView
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
-import android.widget.TextView
 
 /**
  * Fullscreen host for the decoded stream.
@@ -22,8 +21,7 @@ import android.widget.TextView
 class DisplayActivity : Activity(), SurfaceHolder.Callback {
 
     private lateinit var surfaceView: SurfaceView
-    private lateinit var status: TextView
-    private lateinit var overlay: TextView
+    private lateinit var stats: StatsWidget
     private var stream: VideoStream? = null
     private var lastFramesDecoded = 0L
     private var lastFpsSampleAtMs = 0L
@@ -35,37 +33,9 @@ class DisplayActivity : Activity(), SurfaceHolder.Callback {
         window.setBackgroundDrawableResource(android.R.color.black)
 
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
-
-        status = TextView(this).apply {
-            text = "Waiting for host…\n\nConnect the tablet and start the daemon."
-            setTextColor(Color.parseColor("#888888"))
-            textSize = 16f
-            val pad = (24 * resources.displayMetrics.density).toInt()
-            setPadding(pad, pad, pad, pad)
-        }
-        // Small persistent corner readout, unlike `status`: it never fully
-        // disappears once streaming starts, because "was live a minute ago"
-        // and "is live right now" need to look different on screen — a
-        // stalled stream with the last frame frozen on screen is otherwise
-        // indistinguishable from a healthy one.
-        overlay = TextView(this).apply {
-            setTextColor(Color.parseColor("#CCFFFFFF"))
-            setBackgroundColor(Color.parseColor("#66000000"))
-            textSize = 12f
-            typeface = android.graphics.Typeface.MONOSPACE
-            val pad = (8 * resources.displayMetrics.density).toInt()
-            setPadding(pad, pad, pad, pad)
-        }
         surfaceView = SurfaceView(this)
-
         root.addView(surfaceView, FrameLayout.LayoutParams(MATCH, MATCH))
-        root.addView(status, FrameLayout.LayoutParams(MATCH, WRAP))
-        root.addView(
-            overlay,
-            FrameLayout.LayoutParams(WRAP, WRAP).apply {
-                gravity = android.view.Gravity.TOP or android.view.Gravity.START
-            },
-        )
+        stats = StatsWidget(this, root)
         setContentView(root)
 
         stream = VideoStream().also { it.start() }
@@ -95,7 +65,7 @@ class DisplayActivity : Activity(), SurfaceHolder.Callback {
         // swapped here — creating a stream per surface races two instances for
         // the single process-wide socket name.
         stream?.setSurface(holder.surface)
-        status.post(::refreshStatus)
+        surfaceView.post(::refreshStats)
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
@@ -112,19 +82,8 @@ class DisplayActivity : Activity(), SurfaceHolder.Callback {
         super.onDestroy()
     }
 
-    private fun refreshStatus() {
+    private fun refreshStats() {
         val stream = this.stream ?: return
-
-        // The big centered message only makes sense before anything has ever
-        // rendered — once a frame is on screen it would just sit on top of
-        // the picture. `overlay` takes over as the sole readout from then on.
-        status.visibility = if (stream.framesDecoded > 0) View.GONE else View.VISIBLE
-        if (stream.framesDecoded == 0L) {
-            status.text = buildString {
-                append(stream.state)
-                stream.lastError?.let { append("\n\nLast error: $it") }
-            }
-        }
 
         val now = System.currentTimeMillis()
         val fps = if (lastFpsSampleAtMs > 0) {
@@ -137,26 +96,20 @@ class DisplayActivity : Activity(), SurfaceHolder.Callback {
         lastFramesDecoded = stream.framesDecoded
         lastFpsSampleAtMs = now
 
-        val staleness = if (stream.lastFrameAtMs > 0) now - stream.lastFrameAtMs else -1L
-        val liveness = when {
-            stream.framesDecoded == 0L -> ""
-            staleness > 3000 -> "  ⚠ STALLED ${staleness / 1000}s"
-            else -> "  ● LIVE"
-        }
+        val staleMs = if (stream.lastFrameAtMs > 0) now - stream.lastFrameAtMs else -1L
+        stats.update(
+            state = stream.state,
+            streamInfo = stream.streamInfo,
+            fps = fps,
+            frames = stream.framesDecoded,
+            lastError = stream.lastError,
+            staleMs = staleMs,
+        )
 
-        overlay.text = buildString {
-            append(stream.state).append(liveness).append('\n')
-            stream.streamInfo?.let { append(it).append("  ") }
-            append("%.1f fps".format(fps)).append("  ")
-            append(stream.framesDecoded).append(" frames")
-            stream.lastError?.let { append("\nlast error: ").append(it) }
-        }
-
-        overlay.postDelayed(::refreshStatus, 500)
+        surfaceView.postDelayed(::refreshStats, 500)
     }
 
     private companion object {
         const val MATCH = FrameLayout.LayoutParams.MATCH_PARENT
-        const val WRAP = FrameLayout.LayoutParams.WRAP_CONTENT
     }
 }

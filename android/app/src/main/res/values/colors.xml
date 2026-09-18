@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand palette. Kept in one place so the launcher icon, the theme, and
+         StatsWidget's accents (Kotlin-side, deliberately not duplicated here
+         since GradientDrawable/Color.parseColor is simpler than a resource
+         round-trip for one class) all agree with each other. -->
+    <color name="brand_background">#0D1117</color>
+    <color name="brand_accent">#00E5A0</color>
+    <color name="brand_accent_dark">#00B885</color>
+</resources>
