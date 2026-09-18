@@ -18,12 +18,19 @@ gbm.workspace = true
 drm-fourcc.workspace = true
 wayland-scanner = { workspace = true, optional = true }
 wayland-backend = { workspace = true, optional = true }
+evdi = { version = "0.8", optional = true }
+tokio = { version = "1", features = ["rt", "time"], optional = true }
 
 [features]
 # KDE Plasma capture backend. Off by default: it needs the
 # plasma-wayland-protocols XML at build time, and a Hyprland build must not
 # acquire a KDE dependency it never uses.
 plasma = ["dep:wayland-scanner", "dep:wayland-backend"]
+# evdi-based virtual output + capture, for compositors with no native headless
+# output IPC and no ext-image-copy-capture-v1 (niri, as of 26.04). Off by
+# default: it needs libevdi at build time via evdi-sys, which a Hyprland-only
+# build never uses.
+niri = ["dep:evdi", "dep:tokio"]
 
 [[bin]]
 name = "capture-probe"
@@ -33,3 +40,8 @@ path = "src/bin/capture_probe.rs"
 name = "plasma-probe"
 path = "src/bin/plasma_probe.rs"
 required-features = ["plasma"]
+
+[[bin]]
+name = "evdi-probe"
+path = "src/bin/evdi_probe.rs"
+required-features = ["niri"]

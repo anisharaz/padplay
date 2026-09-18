@@ -8,6 +8,12 @@
 
 pub mod discovery;
 pub mod dmabuf;
+/// evdi-based virtual output + capture, for compositors with neither a native
+/// headless-output IPC nor `ext-image-copy-capture-v1` (niri). Needs libevdi
+/// at build time via `evdi-sys`, so it is behind a feature and Hyprland-only
+/// builds never acquire it.
+#[cfg(feature = "niri")]
+pub mod evdi_backend;
 /// KDE Plasma backend. Needs `plasma-wayland-protocols` at build time, so it
 /// is behind a feature and Hyprland builds never see it.
 #[cfg(feature = "plasma")]
