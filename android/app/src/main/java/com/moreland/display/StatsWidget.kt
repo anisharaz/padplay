@@ -38,7 +38,9 @@ class StatsWidget(context: Context, root: FrameLayout) {
     }
 
     private val tab = FrameLayout(context).apply {
-        background = roundedDrawable(BG, rightOnly = true, radius = dp(14).toFloat())
+        background = roundedDrawable(BG, rightOnly = true, radius = dp(14).toFloat()).apply {
+            alpha = TAB_ALPHA_IDLE
+        }
         addView(
             dot,
             FrameLayout.LayoutParams(
@@ -64,7 +66,9 @@ class StatsWidget(context: Context, root: FrameLayout) {
 
     private val panel = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
-        background = roundedDrawable(BG, rightOnly = false, radius = dp(14).toFloat())
+        background = roundedDrawable(BG, rightOnly = false, radius = dp(14).toFloat()).apply {
+            alpha = PANEL_ALPHA
+        }
         setPadding(dp(14), dp(12), dp(14), dp(12))
         addView(header)
         addView(
@@ -100,12 +104,14 @@ class StatsWidget(context: Context, root: FrameLayout) {
         if (expanded == newExpanded) return
         expanded = newExpanded
         val params = panel.layoutParams as LinearLayout.LayoutParams
+        val tabTargetAlpha = if (newExpanded) TAB_ALPHA_ACTIVE else TAB_ALPHA_IDLE
 
         if (!animate) {
             panel.visibility = if (newExpanded) View.VISIBLE else View.GONE
             params.width =
                 if (newExpanded) LinearLayout.LayoutParams.WRAP_CONTENT else 0
             panel.layoutParams = params
+            tab.background.alpha = tabTargetAlpha
             return
         }
 
@@ -114,12 +120,16 @@ class StatsWidget(context: Context, root: FrameLayout) {
         val targetWidth = panel.measuredWidth
         val startWidth = if (newExpanded) 0 else panel.width
         val endWidth = if (newExpanded) targetWidth else 0
+        val tabStartAlpha = tab.background.alpha
 
         ValueAnimator.ofInt(startWidth, endWidth).apply {
             duration = 180
-            addUpdateListener {
-                params.width = it.animatedValue as Int
+            addUpdateListener { animator ->
+                params.width = animator.animatedValue as Int
                 panel.layoutParams = params
+                val fraction = animator.animatedFraction
+                tab.background.alpha =
+                    (tabStartAlpha + (tabTargetAlpha - tabStartAlpha) * fraction).toInt()
             }
             addListener(
                 object : AnimatorListenerAdapter() {
@@ -130,6 +140,7 @@ class StatsWidget(context: Context, root: FrameLayout) {
                             params.width = LinearLayout.LayoutParams.WRAP_CONTENT
                             panel.layoutParams = params
                         }
+                        tab.background.alpha = tabTargetAlpha
                     }
                 },
             )
@@ -139,7 +150,7 @@ class StatsWidget(context: Context, root: FrameLayout) {
 
     /** Called on every refresh tick from [DisplayActivity]. */
     fun update(
-        state: String,
+        phase: Phase,
         streamInfo: String?,
         fps: Double,
         frames: Long,
@@ -156,7 +167,7 @@ class StatsWidget(context: Context, root: FrameLayout) {
         )
 
         body.text = buildString {
-            append(state).append('\n')
+            append(phase.label).append('\n')
             streamInfo?.let { append(it).append("  ") }
             append("%.1f fps".format(fps)).append("  ")
             append(frames).append(" frames")
@@ -189,7 +200,13 @@ class StatsWidget(context: Context, root: FrameLayout) {
         }
 
     private companion object {
-        val BG = Color.parseColor("#E61A1A1A")
+        // Alpha kept out of the color itself (fully opaque `BG`) and applied
+        // separately via Drawable.alpha, so the tab's idle/active alpha can
+        // be animated without recreating the drawable.
+        val BG = Color.parseColor("#1A1A1A")
+        const val TAB_ALPHA_IDLE = 45 // ~18% — present, but stays out of the way
+        const val TAB_ALPHA_ACTIVE = 235 // ~92% — clearly a control once touched
+        const val PANEL_ALPHA = 235
         val COLOR_LIVE = Color.parseColor("#00E5A0")
         val COLOR_STALLED = Color.parseColor("#FFC107")
         val COLOR_WAITING = Color.parseColor("#9E9E9E")

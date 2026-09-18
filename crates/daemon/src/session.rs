@@ -188,11 +188,16 @@ pub fn run(serial: &str, config: &Config, shutdown: &AtomicBool) -> Result<()> {
     )?;
     let port = forward.local_port()?;
 
-    // The abstract socket name is process-wide on Android, so a stale instance
-    // from a previous run would keep it bound and answer with a dead surface.
-    let _ = adb::shell(serial, &format!("am force-stop {APP_PACKAGE}"));
-    std::thread::sleep(Duration::from_millis(500));
-
+    // Deliberately no `am force-stop` here. It used to run before every
+    // session specifically to clear a stale instance's grip on the
+    // process-wide abstract socket name -- but the app is designed to keep
+    // that socket open across sessions now (VideoStream's accept loop
+    // already handles a sequence of connections without restarting), and
+    // `DisplayActivity` is `singleTask`, so `am start` below reuses the
+    // running instance instead of spawning a duplicate. Killing it here
+    // would just be visible, pointless churn: the app quitting and
+    // relaunching on every single connection.
+    //
     // Wake the tablet first. A sleeping or locked device starts the activity
     // without ever making it visible, so no surface is created and the session
     // dies with "no valid surface available" — which looks like a crash but is
@@ -338,9 +343,11 @@ pub fn run(serial: &str, config: &Config, shutdown: &AtomicBool) -> Result<()> {
         report(&round_trips.lock().unwrap(), index, sender.bytes_sent());
     }
 
-    // Leaving the app in the foreground with a dead socket is confusing; send
-    // it home so the tablet returns to a normal state.
-    let _ = adb::shell(serial, &format!("am force-stop {APP_PACKAGE}"));
+    // No `am force-stop` here either (see the comment above the launch
+    // sequence): the app notices the socket closing on its own and falls
+    // back to its Normal/Home view, ready for the next connection. Killing
+    // the process would just be a visible flash back to the launcher for no
+    // reason.
 
     drop(forward);
     drop(output);

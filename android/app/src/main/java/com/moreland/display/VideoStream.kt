@@ -16,6 +16,40 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 /**
+ * Where [VideoStream] currently is, for [DisplayActivity] to decide whether
+ * to show the fullscreen picture or the Normal/Home view, and for
+ * [StatsWidget] to render a label. Deliberately not a raw status string: the
+ * activity needs to make an exact decision ("is this streaming or not"), and
+ * matching against human-readable text is exactly the kind of thing that
+ * quietly breaks the next time the wording changes.
+ */
+sealed class Phase {
+    /** Listening, no host connected. The normal idle state. */
+    data object Waiting : Phase()
+
+    /** Socket accepted; decoder not configured yet. */
+    data object Connecting : Phase()
+
+    /** Decoding and rendering frames. */
+    data object Streaming : Phase()
+
+    /** A connection just ended — `reason` is null for a clean disconnect. */
+    data class Disconnected(val reason: String?) : Phase()
+
+    /** True for the two phases [DisplayActivity] should show the picture for. */
+    val isActive: Boolean get() = this is Connecting || this is Streaming
+
+    /** Human-readable label, shared by the Home status line and [StatsWidget]. */
+    val label: String
+        get() = when (this) {
+            Waiting -> "Waiting for host…"
+            Connecting -> "Host connected — configuring decoder…"
+            Streaming -> "Streaming"
+            is Disconnected -> reason?.let { "Disconnected: $it" } ?: "Host disconnected"
+        }
+}
+
+/**
  * Accepts one host connection at a time on an abstract Unix socket, decodes the
  * H.264 stream, and renders to whatever surface is currently attached.
  *
@@ -28,6 +62,10 @@ import java.util.concurrent.TimeUnit
  * keeps answering connections. So the surface is a *property* of this object,
  * swapped as the view's surface comes and goes, rather than a constructor
  * argument that would tie the stream's lifetime to the surface's.
+ *
+ * Also survives being started and stopped repeatedly across the process's
+ * life — [DisplayActivity]'s "accept connections" toggle just calls
+ * [start]/[stop], it doesn't recreate this object.
  */
 class VideoStream {
 
@@ -51,10 +89,12 @@ class VideoStream {
 
     @Volatile var framesDecoded: Long = 0; private set
     @Volatile var lastError: String? = null; private set
-    /** Human-readable phase, for the on-screen overlay — see [DisplayActivity]. */
-    @Volatile var state: String = "Waiting for host…"; private set
+    @Volatile var phase: Phase = Phase.Waiting; private set
     @Volatile var streamInfo: String? = null; private set
     @Volatile var lastFrameAtMs: Long = 0L; private set
+
+    /** Whether [start] has been called without a matching [stop] since. */
+    val isRunning: Boolean get() = running
 
     /**
      * Attach or detach the render target. Safe to call at any time.
@@ -92,6 +132,7 @@ class VideoStream {
         ackThread?.interrupt()
         thread = null
         ackThread = null
+        phase = Phase.Disconnected(null)
     }
 
     private fun acceptLoop() {
@@ -100,28 +141,29 @@ class VideoStream {
                 LocalServerSocket(Protocol.SOCKET_NAME).use { server ->
                     serverSocket = server
                     Log.i(TAG, "listening on localabstract:${Protocol.SOCKET_NAME}")
-                    state = "Waiting for host…"
+                    phase = Phase.Waiting
                     while (running) {
                         val socket = server.accept()
                         Log.i(TAG, "host connected")
-                        state = "Host connected — configuring decoder…"
+                        phase = Phase.Connecting
                         client = socket
                         runCatching { session(socket) }
                             .onFailure {
                                 lastError = it.message
-                                state = "Disconnected: ${it.message}"
+                                phase = Phase.Disconnected(it.message)
                                 Log.w(TAG, "session ended: ${it.message}")
                             }
-                            .onSuccess { state = "Host disconnected" }
+                            .onSuccess { phase = Phase.Disconnected(null) }
                         runCatching { socket.close() }
                         client = null
                         streamInfo = null
+                        phase = Phase.Waiting
                     }
                 }
             } catch (e: Exception) {
                 if (!running) return
                 lastError = e.message
-                state = "Accept loop error: ${e.message}"
+                phase = Phase.Disconnected(e.message)
                 Log.w(TAG, "accept loop error: ${e.message}")
                 runCatching { Thread.sleep(500) }
             } finally {
@@ -160,7 +202,7 @@ class VideoStream {
         val codec = configureCodec(header, target)
         this.codec = codec
         startAckWriter(output)
-        state = "Streaming"
+        phase = Phase.Streaming
 
         try {
             var scratch = ByteArray(256 * 1024)
@@ -230,8 +272,7 @@ class VideoStream {
             }
 
             override fun onError(codec: MediaCodec, e: MediaCodec.CodecException) {
-                lastError = e.message
-                state = "Decoder error: ${e.message}"
+                lastError = "decoder: ${e.message}"
                 Log.e(TAG, "codec error: ${e.message}", e)
             }
 
