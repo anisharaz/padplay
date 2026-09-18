@@ -363,12 +363,19 @@ impl VirtualOutput {
                 // `Compositor::Sway` case above) for the same reason: no
                 // name comes back from the call that creates it.
                 let before = wlr_randr_output_names().unwrap_or_default();
-                let evdi = capture::evdi_backend::EvdiOutput::create(width, height, refresh)
+                let pending = capture::evdi_backend::EvdiOutput::connect(width, height, refresh)
                     .context("creating evdi virtual output")?;
                 let discovered = discover_new_output(&before)
                     .context("finding the evdi output in wlr-randr's output list")?;
                 position_output(&discovered, width, height, x, y)
                     .context("positioning evdi output via wlr-randr")?;
+                // Registering the buffer only after positioning matters: a
+                // buffer registered before this reconfiguration ends up
+                // pointing at a mapping niri's own modeset (triggered by the
+                // wlr-randr call above, even though the mode value itself
+                // doesn't change) has already invalidated. See
+                // `PendingEvdiOutput::finish`.
+                let evdi = pending.finish().context("registering evdi frame buffer")?;
                 return Ok(Self::Evdi {
                     evdi,
                     name: discovered,

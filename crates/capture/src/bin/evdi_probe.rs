@@ -26,7 +26,7 @@ fn main() -> Result<()> {
         .unwrap_or(60);
 
     println!("creating evdi output {width}x{height}@{refresh}...");
-    let mut output = EvdiOutput::create(width, height, refresh)?;
+    let mut output = EvdiOutput::connect(width, height, refresh)?.finish()?;
     println!(
         "compositor mode-set: {}x{}",
         output.width(),

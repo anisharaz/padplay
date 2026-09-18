@@ -25,7 +25,18 @@ use std::time::Duration;
 use tokio::runtime::Runtime;
 
 const AWAIT_MODE_TIMEOUT: Duration = Duration::from_millis(2000);
-const UPDATE_TIMEOUT: Duration = Duration::from_millis(500);
+/// How long `request_update` waits for a frame before `capture_frame`
+/// reports "nothing new" (see its doc comment — that's a normal outcome, not
+/// an error). Measured empirically at 500ms: real updates were arriving —
+/// the buffer's own `version` climbed continuously in the background — but
+/// individual `request_update` calls still routinely timed out waiting for
+/// their specific completion notification. 5s eliminated that; something in
+/// the request/notify cycle (evdi's kernel side, niri's repaint scheduling,
+/// or the crate's own event plumbing — unclear which) is apparently slower
+/// than 500ms under real load, even though the steady-state round trip once
+/// a frame *does* land is 30-100ms. Worth narrowing later with a proper
+/// investigation; 5s is not tuned, just confirmed to work.
+const UPDATE_TIMEOUT: Duration = Duration::from_millis(5000);
 
 /// One CVT reduced-blanking timing, computed for a given resolution/refresh.
 ///
@@ -258,16 +269,64 @@ pub struct EvdiFrameTiming {
     pub latency: Duration,
 }
 
+/// An evdi handle that's connected and mode-set, but has no buffer
+/// registered yet — see [`EvdiOutput::connect`] for why that split matters.
+pub struct PendingEvdiOutput {
+    handle: Handle,
+    rt: Runtime,
+    mode: Mode,
+}
+
+impl PendingEvdiOutput {
+    /// Re-check the current mode and register a buffer for it.
+    ///
+    /// Call this only once the output's position/scale is done being
+    /// reconfigured — re-fetching the mode here (rather than trusting the one
+    /// from [`EvdiOutput::connect`]) means that even if a reconfiguration
+    /// *did* cause a real mode change underneath us, the buffer still ends up
+    /// sized for whatever the final, settled mode actually is.
+    pub fn finish(self) -> Result<EvdiOutput> {
+        let Self {
+            mut handle,
+            rt,
+            mode,
+        } = self;
+        let mode = rt
+            .block_on(handle.events.await_mode(AWAIT_MODE_TIMEOUT))
+            .unwrap_or(mode);
+        let buffer_id = handle.new_buffer(&mode);
+        Ok(EvdiOutput {
+            handle,
+            rt,
+            buffer_id,
+            mode,
+        })
+    }
+}
+
 impl EvdiOutput {
     /// Open (or wait briefly for) an evdi device node, connect it with a
     /// synthesized EDID for `width`x`height`@`refresh_hz`, and block until
-    /// the compositor mode-sets it.
+    /// the compositor mode-sets it — but stop short of registering a buffer.
+    ///
+    /// Split from buffer registration deliberately: the caller still has to
+    /// discover the connector's compositor-assigned name and reconfigure its
+    /// position (evdi doesn't get to choose either), and that reconfiguration
+    /// can itself trigger a modeset — even one that changes nothing evdi
+    /// considers part of the "mode" (width/height/refresh), a
+    /// wlr-output-management client re-asserting the *whole* output
+    /// configuration (mode included) is enough to make some compositors redo
+    /// it internally. A buffer registered before that point gets left
+    /// pointing at a mapping the kernel already invalidated — every
+    /// subsequent `request_update` fails with `EFAULT` ("Bad address"). See
+    /// `VirtualOutput::create`'s `Compositor::Niri` arm for the full
+    /// sequence this is meant to be used in.
     ///
     /// Requires an evdi device node to already exist and be accessible to
     /// this user (see `docs/` for the one-time udev setup) — creating one
     /// (`DeviceNode::add`) needs superuser permissions, which a `--user`
     /// systemd service should not have.
-    pub fn create(width: u32, height: u32, refresh_hz: u32) -> Result<Self> {
+    pub fn connect(width: u32, height: u32, refresh_hz: u32) -> Result<PendingEvdiOutput> {
         let device = DeviceNode::get().context(
             "no evdi device node available. \
              Run the evdi one-time setup (see docs/) to create one — it \
@@ -277,7 +336,20 @@ impl EvdiOutput {
         let edid = build_edid(width, height, refresh_hz);
         let config = DeviceConfig::new(&edid, width, height);
 
-        let rt = tokio::runtime::Builder::new_current_thread()
+        // Must be multi-threaded, not current-thread: `connect` spawns a
+        // background task that reads evdi's kernel events and is what
+        // actually powers `events`/`request_update`. A current-thread
+        // runtime only drives spawned tasks while something is inside
+        // `block_on` on that same thread — between our polls (encoding,
+        // pushing to the USB transport, the outer session loop) it would sit
+        // completely idle. The result isn't a hang, which would be obvious;
+        // it's a buffer whose `version` keeps climbing (evdi itself is fine)
+        // while `request_update` times out anyway, because the task that
+        // would tell us a fresh version arrived never got to run. A
+        // dedicated worker thread keeps that task running continuously
+        // regardless of what our calling thread is doing.
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
             .enable_time()
             .build()
             .context("starting evdi's Tokio runtime")?;
@@ -287,7 +359,7 @@ impl EvdiOutput {
         // that later powers `events`/`request_update`. So open, connect, and
         // the first `await_mode` all have to happen inside one `block_on`,
         // not as separate calls each wrapped individually.
-        let (mut handle, mode) = rt.block_on(async {
+        let (handle, mode) = rt.block_on(async {
             // Safety: see the `evdi` crate's top-level "Alpha quality" note —
             // it has not audited evdi's own soundness invariants. This
             // mirrors the crate's own documented basic-usage pattern exactly.
@@ -304,14 +376,7 @@ impl EvdiOutput {
             Ok::<_, anyhow::Error>((handle, mode))
         })?;
 
-        let buffer_id = handle.new_buffer(&mode);
-
-        Ok(Self {
-            handle,
-            rt,
-            buffer_id,
-            mode,
-        })
+        Ok(PendingEvdiOutput { handle, rt, mode })
     }
 
     pub fn width(&self) -> u32 {
@@ -322,16 +387,31 @@ impl EvdiOutput {
         self.mode.height
     }
 
-    /// Ask evdi for a fresh frame, blocking until it arrives or `timeout`
-    /// elapses.
-    pub fn capture_frame(&mut self) -> Result<EvdiFrameTiming> {
+    /// Ask evdi for a fresh frame, waiting up to a few seconds for one.
+    ///
+    /// Returns `Ok(None)` on a plain timeout rather than erroring: a virtual
+    /// monitor showing unchanging content (an idle desktop, a static image)
+    /// is expected to go quiet between repaints — evdi is damage-driven, so
+    /// "nothing new yet" is the normal case here, not a failure. The
+    /// equivalent Wayland capture path (`session::Capture::capture_frame`)
+    /// has the same property but surfaces it by simply blocking rather than
+    /// erroring; evdi's `request_update` needs an explicit timeout, so the
+    /// caller has to interpret it instead.
+    pub fn capture_frame(&mut self) -> Result<Option<EvdiFrameTiming>> {
+        use evdi::events::AwaitEventError;
+        use evdi::handle::RequestUpdateError;
+
         let started = std::time::Instant::now();
-        self.rt
+        match self
+            .rt
             .block_on(self.handle.request_update(self.buffer_id, UPDATE_TIMEOUT))
-            .map_err(|e| anyhow::anyhow!("evdi frame update failed: {e:?}"))?;
-        Ok(EvdiFrameTiming {
-            latency: started.elapsed(),
-        })
+        {
+            Ok(()) => Ok(Some(EvdiFrameTiming {
+                latency: started.elapsed(),
+            })),
+            Err(RequestUpdateError::AwaitUpdate(AwaitEventError::Timeout)) => Ok(None),
+            Err(e) => Err(anyhow::anyhow!("evdi frame update failed: {e:?}")),
+        }
     }
 
     /// Raw pixel bytes of the most recently captured frame. Format is

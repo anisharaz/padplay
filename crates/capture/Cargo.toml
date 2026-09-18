@@ -19,7 +19,7 @@ drm-fourcc.workspace = true
 wayland-scanner = { workspace = true, optional = true }
 wayland-backend = { workspace = true, optional = true }
 evdi = { version = "0.8", optional = true }
-tokio = { version = "1", features = ["rt", "time"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "time"], optional = true }
 
 [features]
 # KDE Plasma capture backend. Off by default: it needs the

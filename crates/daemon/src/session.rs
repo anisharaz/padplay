@@ -44,7 +44,13 @@ impl FrameSource<'_> {
         }
     }
 
-    fn capture_and_push(&mut self, encoder: &Encoder, pts_ns: u64) -> Result<()> {
+    /// Capture and push one frame. Returns `false` (nothing pushed, no
+    /// error) when the backend has nothing new — currently only possible on
+    /// the evdi path, which is damage-driven and reports "no update yet" as
+    /// a plain timeout rather than blocking indefinitely the way the Wayland
+    /// path does. The caller should not advance its frame index/timestamp
+    /// when this returns `false`.
+    fn capture_and_push(&mut self, encoder: &Encoder, pts_ns: u64) -> Result<bool> {
         match self {
             Self::Wayland(c) => {
                 let timing = c.capture_frame()?;
@@ -56,12 +62,16 @@ impl FrameSource<'_> {
                     dmabuf.planes[0].offset,
                     dmabuf.planes[0].stride,
                     pts_ns,
-                )
+                )?;
+                Ok(true)
             }
             Self::Evdi(e) => {
-                e.capture_frame()?;
+                let Some(_timing) = e.capture_frame()? else {
+                    return Ok(false);
+                };
                 let stride = e.stride()?;
-                encoder.push_frame_bytes(e.bytes()?, stride, pts_ns)
+                encoder.push_frame_bytes(e.bytes()?, stride, pts_ns)?;
+                Ok(true)
             }
         }
     }
@@ -308,8 +318,9 @@ pub fn run(serial: &str, config: &Config, shutdown: &AtomicBool) -> Result<()> {
     let mut index = 0u64;
     let result = (|| -> Result<()> {
         while !shutdown.load(Ordering::Relaxed) {
-            frame_source.capture_and_push(&encoder, index * frame_duration_ns)?;
-            index += 1;
+            if frame_source.capture_and_push(&encoder, index * frame_duration_ns)? {
+                index += 1;
+            }
 
             while let Ok((data, pts, keyframe)) = packet_rx.try_recv() {
                 sent_at.lock().unwrap().push_back(Instant::now());
