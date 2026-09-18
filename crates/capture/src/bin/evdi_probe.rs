@@ -54,18 +54,37 @@ fn main() -> Result<()> {
         String::from_utf8_lossy(&out.stdout)
     );
 
-    print!("capturing 5 frames... ");
-    for i in 0..5 {
-        let timing = output.capture_frame()?;
-        let bytes = output.bytes()?;
-        let nonzero = bytes.iter().take(300_000).filter(|&&b| b != 0).count();
-        println!(
-            "frame {i}: latency={:?} stride={} nonzero_sample={nonzero}/300000",
-            timing.latency,
-            output.stride()?
-        );
-        std::thread::sleep(Duration::from_millis(100));
+    // Tight loop, no sleep — matches how the daemon's main loop actually
+    // calls this (immediate retry on a timeout), so the achieved rate here
+    // is a real measurement of capture cadence, not an artifact of pacing.
+    let run_for = Duration::from_secs(5);
+    let started = std::time::Instant::now();
+    let mut hits = 0u32;
+    let mut misses = 0u32;
+    let mut latencies = Vec::new();
+    while started.elapsed() < run_for {
+        match output.capture_frame()? {
+            Some(timing) => {
+                hits += 1;
+                latencies.push(timing.latency);
+            }
+            None => misses += 1,
+        }
     }
+    latencies.sort();
+    let median = latencies.get(latencies.len() / 2).copied().unwrap_or_default();
+    let elapsed = started.elapsed().as_secs_f64();
+    println!(
+        "over {elapsed:.1}s: {hits} frames captured ({:.1} fps), {misses} timeouts, median latency {median:?}",
+        hits as f64 / elapsed,
+    );
+    if let Some(last) = latencies.last() {
+        println!("min latency {:?}, max latency {last:?}", latencies.first().unwrap());
+    }
+
+    let bytes = output.bytes()?;
+    let nonzero = bytes.iter().take(300_000).filter(|&&b| b != 0).count();
+    println!("last frame nonzero_sample={nonzero}/300000 stride={}", output.stride()?);
 
     Ok(())
 }

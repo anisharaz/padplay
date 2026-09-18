@@ -51,6 +51,10 @@ class VideoStream {
 
     @Volatile var framesDecoded: Long = 0; private set
     @Volatile var lastError: String? = null; private set
+    /** Human-readable phase, for the on-screen overlay — see [DisplayActivity]. */
+    @Volatile var state: String = "Waiting for host…"; private set
+    @Volatile var streamInfo: String? = null; private set
+    @Volatile var lastFrameAtMs: Long = 0L; private set
 
     /**
      * Attach or detach the render target. Safe to call at any time.
@@ -96,22 +100,28 @@ class VideoStream {
                 LocalServerSocket(Protocol.SOCKET_NAME).use { server ->
                     serverSocket = server
                     Log.i(TAG, "listening on localabstract:${Protocol.SOCKET_NAME}")
+                    state = "Waiting for host…"
                     while (running) {
                         val socket = server.accept()
                         Log.i(TAG, "host connected")
+                        state = "Host connected — configuring decoder…"
                         client = socket
                         runCatching { session(socket) }
                             .onFailure {
                                 lastError = it.message
+                                state = "Disconnected: ${it.message}"
                                 Log.w(TAG, "session ended: ${it.message}")
                             }
+                            .onSuccess { state = "Host disconnected" }
                         runCatching { socket.close() }
                         client = null
+                        streamInfo = null
                     }
                 }
             } catch (e: Exception) {
                 if (!running) return
                 lastError = e.message
+                state = "Accept loop error: ${e.message}"
                 Log.w(TAG, "accept loop error: ${e.message}")
                 runCatching { Thread.sleep(500) }
             } finally {
@@ -141,6 +151,7 @@ class VideoStream {
 
         val header = Protocol.readStreamHeader(input)
         Log.i(TAG, "stream ${header.width}x${header.height}@${header.framerate} ${header.mime}")
+        streamInfo = "${header.width}x${header.height}@${header.framerate}"
 
         val target = awaitSurface()
         freeInputs.clear()
@@ -149,6 +160,7 @@ class VideoStream {
         val codec = configureCodec(header, target)
         this.codec = codec
         startAckWriter(output)
+        state = "Streaming"
 
         try {
             var scratch = ByteArray(256 * 1024)
@@ -212,12 +224,14 @@ class VideoStream {
                 runCatching { codec.releaseOutputBuffer(index, render) }
                 if (render) {
                     framesDecoded++
+                    lastFrameAtMs = System.currentTimeMillis()
                     pendingAcks.offer(info.presentationTimeUs * 1000)
                 }
             }
 
             override fun onError(codec: MediaCodec, e: MediaCodec.CodecException) {
                 lastError = e.message
+                state = "Decoder error: ${e.message}"
                 Log.e(TAG, "codec error: ${e.message}", e)
             }
 

@@ -23,7 +23,10 @@ class DisplayActivity : Activity(), SurfaceHolder.Callback {
 
     private lateinit var surfaceView: SurfaceView
     private lateinit var status: TextView
+    private lateinit var overlay: TextView
     private var stream: VideoStream? = null
+    private var lastFramesDecoded = 0L
+    private var lastFpsSampleAtMs = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -40,10 +43,29 @@ class DisplayActivity : Activity(), SurfaceHolder.Callback {
             val pad = (24 * resources.displayMetrics.density).toInt()
             setPadding(pad, pad, pad, pad)
         }
+        // Small persistent corner readout, unlike `status`: it never fully
+        // disappears once streaming starts, because "was live a minute ago"
+        // and "is live right now" need to look different on screen — a
+        // stalled stream with the last frame frozen on screen is otherwise
+        // indistinguishable from a healthy one.
+        overlay = TextView(this).apply {
+            setTextColor(Color.parseColor("#CCFFFFFF"))
+            setBackgroundColor(Color.parseColor("#66000000"))
+            textSize = 12f
+            typeface = android.graphics.Typeface.MONOSPACE
+            val pad = (8 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad, pad, pad)
+        }
         surfaceView = SurfaceView(this)
 
         root.addView(surfaceView, FrameLayout.LayoutParams(MATCH, MATCH))
         root.addView(status, FrameLayout.LayoutParams(MATCH, WRAP))
+        root.addView(
+            overlay,
+            FrameLayout.LayoutParams(WRAP, WRAP).apply {
+                gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            },
+        )
         setContentView(root)
 
         stream = VideoStream().also { it.start() }
@@ -73,7 +95,7 @@ class DisplayActivity : Activity(), SurfaceHolder.Callback {
         // swapped here — creating a stream per surface races two instances for
         // the single process-wide socket name.
         stream?.setSurface(holder.surface)
-        status.postDelayed(::refreshStatus, 1000)
+        status.post(::refreshStatus)
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
@@ -92,12 +114,45 @@ class DisplayActivity : Activity(), SurfaceHolder.Callback {
 
     private fun refreshStatus() {
         val stream = this.stream ?: return
-        if (stream.framesDecoded > 0) {
-            status.visibility = View.GONE
-        } else {
-            stream.lastError?.let { status.text = "Waiting for host…\n\nLast error: $it" }
-            status.postDelayed(::refreshStatus, 1000)
+
+        // The big centered message only makes sense before anything has ever
+        // rendered — once a frame is on screen it would just sit on top of
+        // the picture. `overlay` takes over as the sole readout from then on.
+        status.visibility = if (stream.framesDecoded > 0) View.GONE else View.VISIBLE
+        if (stream.framesDecoded == 0L) {
+            status.text = buildString {
+                append(stream.state)
+                stream.lastError?.let { append("\n\nLast error: $it") }
+            }
         }
+
+        val now = System.currentTimeMillis()
+        val fps = if (lastFpsSampleAtMs > 0) {
+            val elapsedS = (now - lastFpsSampleAtMs) / 1000.0
+            val delta = stream.framesDecoded - lastFramesDecoded
+            if (elapsedS > 0) delta / elapsedS else 0.0
+        } else {
+            0.0
+        }
+        lastFramesDecoded = stream.framesDecoded
+        lastFpsSampleAtMs = now
+
+        val staleness = if (stream.lastFrameAtMs > 0) now - stream.lastFrameAtMs else -1L
+        val liveness = when {
+            stream.framesDecoded == 0L -> ""
+            staleness > 3000 -> "  ⚠ STALLED ${staleness / 1000}s"
+            else -> "  ● LIVE"
+        }
+
+        overlay.text = buildString {
+            append(stream.state).append(liveness).append('\n')
+            stream.streamInfo?.let { append(it).append("  ") }
+            append("%.1f fps".format(fps)).append("  ")
+            append(stream.framesDecoded).append(" frames")
+            stream.lastError?.let { append("\nlast error: ").append(it) }
+        }
+
+        overlay.postDelayed(::refreshStatus, 500)
     }
 
     private companion object {

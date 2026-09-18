@@ -27,16 +27,23 @@ use tokio::runtime::Runtime;
 const AWAIT_MODE_TIMEOUT: Duration = Duration::from_millis(2000);
 /// How long `request_update` waits for a frame before `capture_frame`
 /// reports "nothing new" (see its doc comment — that's a normal outcome, not
-/// an error). Measured empirically at 500ms: real updates were arriving —
-/// the buffer's own `version` climbed continuously in the background — but
-/// individual `request_update` calls still routinely timed out waiting for
-/// their specific completion notification. 5s eliminated that; something in
-/// the request/notify cycle (evdi's kernel side, niri's repaint scheduling,
-/// or the crate's own event plumbing — unclear which) is apparently slower
-/// than 500ms under real load, even though the steady-state round trip once
-/// a frame *does* land is 30-100ms. Worth narrowing later with a proper
-/// investigation; 5s is not tuned, just confirmed to work.
-const UPDATE_TIMEOUT: Duration = Duration::from_millis(5000);
+/// an error, and the caller already retries immediately on it).
+///
+/// Root cause of the choppiness this once caused: `evdi::Handle::request_update`
+/// first tries a synchronous, immediate grab (`evdi_request_update` — instant
+/// if a frame is already sitting there), and only falls back to an async wait
+/// when that says "not yet". That async wait subscribes to a broadcast
+/// channel *after* the immediate check already came back empty — a tokio
+/// `broadcast` channel doesn't replay anything sent before a subscriber
+/// joins, so an update event landing in that gap is simply missed, and the
+/// call blocks for the full timeout waiting for the *next* one. A short
+/// timeout turns that miss into a quick retry (the fast synchronous path
+/// catches it almost every time) instead of a multi-second stall — measured
+/// at 150ms: 380 frames in 5s (75.3fps) against a moving video, 0 timeouts,
+/// median capture latency 9.7ms. 5000ms measured 5 total captures in the
+/// same window. The fix is entirely about retry granularity, not about the
+/// underlying request/notify path getting faster.
+const UPDATE_TIMEOUT: Duration = Duration::from_millis(150);
 
 /// One CVT reduced-blanking timing, computed for a given resolution/refresh.
 ///
