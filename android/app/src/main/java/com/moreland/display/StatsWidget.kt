@@ -30,6 +30,9 @@ import android.widget.TextView
  * streamed yet, so the guidance matters), then auto-collapses once on the
  * first decoded frame — after that it only moves when tapped.
  */
+// See the same suppression on DisplayActivity: no localization plan for a
+// single-purpose diagnostic overlay.
+@Suppress("SetTextI18n")
 class StatsWidget(private val context: Context, root: FrameLayout) {
 
     private val density = context.resources.displayMetrics.density

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <application
         android:allowBackup="false"
@@ -7,8 +8,13 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Moreland">
+        android:theme="@style/Theme.Moreland"
+        tools:ignore="DataExtractionRules">
 
+        <!-- Fixed orientation and non-resizable are both deliberate: this
+             activity is a 1:1 pixel surface for the host's stream, matched
+             to the tablet's native panel orientation. Letterboxing or
+             free-form resize would misalign it, not just look different. -->
         <activity
             android:name=".DisplayActivity"
             android:exported="true"
@@ -17,7 +23,8 @@
             android:resizeableActivity="false"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|density|smallestScreenSize"
             android:showWhenLocked="true"
-            android:turnScreenOn="true">
+            android:turnScreenOn="true"
+            tools:ignore="DiscouragedApi,NonResizeableActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

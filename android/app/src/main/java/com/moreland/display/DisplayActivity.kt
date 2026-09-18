@@ -35,6 +35,10 @@ import android.widget.TextView
  * `SurfaceView` can be destroyed and recreated (immersive mode flicker,
  * rotation) without tearing down an in-progress decode.
  */
+// A single-purpose diagnostic/status app -- there is no localization plan,
+// so lint's "this literal can't be translated" nag on every `text = "..."`
+// is noise here, not a real gap.
+@Suppress("SetTextI18n")
 class DisplayActivity : Activity(), SurfaceHolder.Callback {
 
     private enum class Mode { HOME, DISPLAY }
