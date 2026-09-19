@@ -124,24 +124,26 @@ impl Default for Config {
             bitrate_kbps: 20_000,
             // To the left of a 1920x1080 primary at 0x0 — this fork's own
             // reference layout (see `~/.config/niri/config.d/output.kdl`,
-            // which places the evdi connector at the same x=-1280, y=0 as a
+            // which places the evdi connector at the same x=-1536, y=0 as a
             // static pre-connect default). The daemon's own `wlr-randr`
             // reposition on every niri connect always wins over that static
             // config, so the two need to agree, and this is the one that
             // actually matches the hardware this fork runs on. Override with
             // `--position`/`--position-y` if your layout differs.
             //
-            // -1280, not -1920: position is in logical (post-scale) pixels,
-            // and at `scale` 1.5 a physically-1920px-wide output is only
-            // 1920 / 1.5 = 1280 logical px wide. Using the physical width
-            // here would leave a 640px dead zone between the two outputs
-            // that the cursor can't cross by moving off either edge.
-            position_x: -1280,
+            // -1536, not -1920: position is in logical (post-scale) pixels,
+            // and at `scale` 1.25 a physically-1920px-wide output is only
+            // 1920 / 1.25 = 1536 logical px wide. Using the physical width
+            // here would leave a 384px dead zone between the two outputs
+            // that the cursor can't cross by moving off either edge. If
+            // `--scale` changes, this needs to change with it (logical
+            // width = physical width / scale) or that gap reappears.
+            position_x: -1536,
             position_y: 0,
             // The tablet panel is physically small (11"), so content at
-            // native scale reads tiny up close. 1.5 is a starting point, not
-            // a measurement — override with --scale to taste.
-            scale: 1.5,
+            // native scale reads tiny up close. 1.25 is a starting point,
+            // not a measurement — override with --scale to taste.
+            scale: 1.25,
             output_name: capture::VIRTUAL_OUTPUT_NAME.to_string(),
             paint_cursor: false,
             stats: false,
