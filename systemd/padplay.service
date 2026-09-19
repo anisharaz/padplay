@@ -1,5 +1,5 @@
 [Unit]
-Description=Moreland — Android tablet as a second monitor
+Description=PadPlay — Android tablet as a second monitor
 Documentation=https://github.com/anisharaz/padplay
 
 # Needs a running Wayland compositor: the daemon creates (Hyprland, via
@@ -10,7 +10,7 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/moreland
+ExecStart=%h/.local/bin/padplay
 Restart=on-failure
 RestartSec=5
 

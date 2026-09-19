@@ -3,19 +3,19 @@
 **Status: the Wayland half works. A real second monitor can be created on KDE
 Plasma, with a PipeWire node for its contents.** The PipeWire consumer that
 turns that node into frames is not written yet, so nothing reaches the tablet
-and `moreland-doctor.sh` still reports `BLOCKED`.
+and `padplay-doctor.sh` still reports `BLOCKED`.
 
 Verified on KWin 6.7.4 — a genuine output at `1920,0 1920x1200`, enabled, with
 PipeWire node 85, torn down cleanly when the client exits:
 
 ```console
 $ plasma-probe
-  name           moreland
+  name           padplay
   pipewire node  85
   object serial  1586
 
 $ kscreen-doctor -o
-Output: 1 Virtual-moreland   enabled   Geometry: 1920,0 1920x1200
+Output: 1 Virtual-padplay   enabled   Geometry: 1920,0 1920x1200
 Output: 2 eDP-1              enabled   Geometry: 0,0 1746x982
 ```
 
@@ -150,7 +150,7 @@ installed by default**).
 `crates/capture/src/plasma/`, behind an off-by-default `plasma` cargo feature.
 The feature gates a build-time dependency on the protocol XML, so a Hyprland
 build is unchanged — verified by building the daemon with
-`MORELAND_ZKDE_SCREENCAST_XML` pointed at a nonexistent file.
+`PADPLAY_ZKDE_SCREENCAST_XML` pointed at a nonexistent file.
 
 The XML is **not vendored**: it is LGPL-2.1-or-later against this project's
 Apache-2.0, so `build.rs` locates the system copy and writes a wrapper module
@@ -167,7 +167,7 @@ useful, both as a diagnostic and as the shape of a future mirroring feature.
 
 ```
 -> zkde_screencast_unstable_v1@3.stream_virtual_output_with_description(
-     stream@5, "moreland", "Moreland tablet monitor", 1920, 1200, 1.0000, 2)
+     stream@5, "padplay", "PadPlay tablet monitor", 1920, 1200, 1.0000, 2)
 <- zkde_screencast_stream_unstable_v1@5.failed, ("Could not find output")
 ```
 
@@ -231,7 +231,7 @@ that the output lands disabled.
 ## Verification
 
 ```bash
-scripts/moreland-doctor.sh          # reports the grant under "KDE backend prerequisites"
+scripts/padplay-doctor.sh          # reports the grant under "KDE backend prerequisites"
 kbuildsycoca6 --noincremental       # after any change to the desktop entry
 wayland-info | grep zkde_screencast # empty for an undeclared client; that is the gate working
 ```

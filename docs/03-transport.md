@@ -31,7 +31,7 @@ Round-trip and bad-magic rejection are unit-tested in `crates/protocol`.
 
 ## Transport
 
-`adb forward tcp:27183 localabstract:moreland` in production — the device app
+`adb forward tcp:27183 localabstract:padplay` in production — the device app
 listens on an abstract Unix socket, so traffic never touches Android's TCP stack
 or `netd`. The host connects to the forwarded local port.
 
@@ -139,7 +139,7 @@ The probe spawns and cleans up its own device-side sink. If a run is
 interrupted, clear leftovers manually:
 
 ```bash
-adb shell "pkill -f 'nc -l'; rm -f /data/local/tmp/moreland-sink.bin"
+adb shell "pkill -f 'nc -l'; rm -f /data/local/tmp/padplay-sink.bin"
 adb forward --remove-all
 ```
 

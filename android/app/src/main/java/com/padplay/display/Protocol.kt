@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package com.moreland.display
+package com.padplay.display
 
 import java.io.DataInputStream
 import java.io.EOFException
@@ -13,7 +13,7 @@ import java.io.IOException
  * [DataInputStream] can be used directly here — no byte-swapping anywhere.
  */
 object Protocol {
-    const val SOCKET_NAME = "moreland"
+    const val SOCKET_NAME = "padplay"
 
     private const val MAGIC = 0x4D524C44 // "MRLD"
     const val VERSION = 1

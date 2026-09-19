@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package com.moreland.display
+package com.padplay.display
 
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
@@ -62,7 +62,7 @@ class StatsWidget(private val context: Context, root: FrameLayout) {
     // --- the dialog: built once, shown/hidden as a whole --------------------
 
     private val dialogTitle = TextView(context).apply {
-        text = "Moreland"
+        text = "PadPlay"
         setTextColor(COLOR_ACCENT)
         textSize = 13f
         typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)

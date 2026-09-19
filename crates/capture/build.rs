@@ -17,7 +17,7 @@
 use std::path::{Path, PathBuf};
 
 const XML_NAME: &str = "zkde-screencast-unstable-v1.xml";
-const ENV_OVERRIDE: &str = "MORELAND_ZKDE_SCREENCAST_XML";
+const ENV_OVERRIDE: &str = "PADPLAY_ZKDE_SCREENCAST_XML";
 
 fn main() {
     println!("cargo:rerun-if-env-changed={ENV_OVERRIDE}");

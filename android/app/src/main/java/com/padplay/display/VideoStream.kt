@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package com.moreland.display
+package com.padplay.display
 
 import android.media.MediaCodec
 import android.media.MediaFormat
@@ -53,7 +53,7 @@ sealed class Phase {
  * Accepts one host connection at a time on an abstract Unix socket, decodes the
  * H.264 stream, and renders to whatever surface is currently attached.
  *
- * The host reaches this socket via `adb forward tcp:27183 localabstract:moreland`,
+ * The host reaches this socket via `adb forward tcp:27183 localabstract:padplay`,
  * so nothing here touches Android's TCP stack or `netd`.
  *
  * **Exactly one instance may exist per process.** The socket name is a
@@ -70,7 +70,7 @@ sealed class Phase {
 class VideoStream {
 
     private companion object {
-        const val TAG = "Moreland"
+        const val TAG = "PadPlay"
         const val INPUT_TIMEOUT_MS = 2000L
         const val SURFACE_WAIT_MS = 5000L
     }
@@ -121,7 +121,7 @@ class VideoStream {
     fun start() {
         if (running) return
         running = true
-        thread = Thread(::acceptLoop, "moreland-stream").apply { start() }
+        thread = Thread(::acceptLoop, "padplay-stream").apply { start() }
     }
 
     fun stop() {
@@ -302,6 +302,6 @@ class VideoStream {
             } catch (e: Exception) {
                 Log.w(TAG, "ack writer stopped: ${e.message}")
             }
-        }, "moreland-ack").apply { start() }
+        }, "padplay-ack").apply { start() }
     }
 }

@@ -145,13 +145,13 @@ crates/encoder/
 
 ```bash
 # benchmark with defaults
-./target/release/encode-probe moreland --frames 300
+./target/release/encode-probe padplay --frames 300
 
 # sweep a parameter
-./target/release/encode-probe moreland --rate-control vbr --target-usage 3
+./target/release/encode-probe padplay --rate-control vbr --target-usage 3
 
 # capture a bitstream and check it decodes
-./target/release/encode-probe moreland --frames 300 --out /tmp/out.h264
+./target/release/encode-probe padplay --frames 300 --out /tmp/out.h264
 gst-launch-1.0 filesrc location=/tmp/out.h264 ! h264parse ! avdec_h264 ! fakesink
 ffprobe -show_entries stream=profile,width,height,has_b_frames /tmp/out.h264
 ```

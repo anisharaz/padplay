@@ -192,7 +192,7 @@ pub(super) fn build_edid(width: u32, height: u32, refresh_hz: u32) -> Vec<u8> {
     edid[74] = 0x00;
     edid[75] = 0xFC; // monitor name tag
     edid[76] = 0x00;
-    let name = b"Moreland";
+    let name = b"PadPlay";
     let mut name_field = [0x20u8; 13]; // space-padded per spec
     name_field[..name.len()].copy_from_slice(name);
     name_field[name.len()] = 0x0A; // line-feed terminator

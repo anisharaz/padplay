@@ -37,7 +37,7 @@ impl DeviceTracker {
     pub fn connect() -> Result<Self> {
         // Idempotent; brings the server up if this is the first client.
         let _ = Command::new(
-            std::env::var("MORELAND_ADB").unwrap_or_else(|_| "adb".into()),
+            std::env::var("PADPLAY_ADB").unwrap_or_else(|_| "adb".into()),
         )
         .arg("start-server")
         .output();

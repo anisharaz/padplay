@@ -5,9 +5,9 @@
 use anyhow::{bail, Context, Result};
 use std::process::Command;
 
-/// Override the adb binary with `MORELAND_ADB` when it is not on `PATH`.
+/// Override the adb binary with `PADPLAY_ADB` when it is not on `PATH`.
 fn adb_binary() -> String {
-    std::env::var("MORELAND_ADB").unwrap_or_else(|_| "adb".to_string())
+    std::env::var("PADPLAY_ADB").unwrap_or_else(|_| "adb".to_string())
 }
 
 fn adb(args: &[&str]) -> Result<String> {

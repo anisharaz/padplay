@@ -4,11 +4,11 @@
 
     <application
         android:allowBackup="false"
-        android:label="Moreland"
+        android:label="PadPlay"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Moreland"
+        android:theme="@style/Theme.PadPlay"
         tools:ignore="DataExtractionRules">
 
         <!-- Fixed orientation and non-resizable are both deliberate: this

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package com.moreland.display
+package com.padplay.display
 
 import android.app.Activity
 import android.graphics.Color
@@ -97,7 +97,7 @@ class DisplayActivity : Activity(), SurfaceHolder.Callback {
         val dp = { v: Int -> (v * resources.displayMetrics.density).toInt() }
 
         val title = TextView(this).apply {
-            text = "Moreland"
+            text = "PadPlay"
             setTextColor(Color.parseColor("#00E5A0"))
             textSize = 28f
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)

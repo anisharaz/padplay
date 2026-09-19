@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Moreland daemon.
+//! PadPlay daemon.
 //!
-//!   moreland                 watch for the tablet; stream whenever it is plugged in
-//!   moreland --once          stream one session, then exit
-//!   moreland --seconds N     stop after N seconds (implies --once, --stats)
+//!   padplay                 watch for the tablet; stream whenever it is plugged in
+//!   padplay --once          stream one session, then exit
+//!   padplay --seconds N     stop after N seconds (implies --once, --stats)
 //!
 //! Plug the tablet in and a virtual monitor appears; unplug it and the monitor
 //! disappears. No commands in between.

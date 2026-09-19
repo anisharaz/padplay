@@ -36,7 +36,7 @@ PipeWire (default sink's monitor, followed live — not redirected)
         v   single writer thread, audio drained before video each tick
    crates/transport::Sender   (StreamType-tagged frames, one socket)
         |
-        v   adb forward -> localabstract:moreland
+        v   adb forward -> localabstract:padplay
    VideoStream.kt's read loop (single demuxer)
         |
         +--> StreamType::Video --> existing MediaCodec/SurfaceView path (unchanged)
@@ -309,7 +309,7 @@ the jitter-buffer/sync design above). `audio-type=generic`, not `voip`
   they're from general PipeWire/GStreamer knowledge and need confirming
   once the plugin is actually installed).
 - `opusenc` **is** confirmed present (ships in `gst-plugins-base`).
-- `moreland-doctor.sh` needs a new check block: `gst-inspect-1.0
+- `padplay-doctor.sh` needs a new check block: `gst-inspect-1.0
   pipewiresrc`/`opusenc` alongside the existing `vapostproc`/`vah264enc`
   checks, plus a live PipeWire check (`pactl info | grep -i "server
   name.*pipewire"`, not just checking `pactl`/`pw-cli` exist — same
@@ -381,4 +381,4 @@ the jitter-buffer/sync design above). `audio-type=generic`, not `voip`
    flag.
 5. Android `AudioStream` + `AudioSink` demux wiring, built and tested
    against a daemon already emitting real audio frames from step 4.
-6. `moreland-doctor.sh` / `COMPATIBILITY.md` updates.
+6. `padplay-doctor.sh` / `COMPATIBILITY.md` updates.

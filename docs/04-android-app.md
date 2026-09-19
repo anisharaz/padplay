@@ -10,7 +10,7 @@ from the 1920x1200 stream with no distortion (both are 16:10).
 ## What it does
 
 ```
-LocalServerSocket("moreland")        abstract Unix socket
+LocalServerSocket("padplay")        abstract Unix socket
   -> StreamHeader                     configure decoder
   -> MediaCodec (async, low-latency)  hardware H.264
   -> SurfaceView                      direct render
@@ -18,7 +18,7 @@ LocalServerSocket("moreland")        abstract Unix socket
 ```
 
 The host reaches the socket through
-`adb forward tcp:27183 localabstract:moreland`, so traffic never touches
+`adb forward tcp:27183 localabstract:padplay`, so traffic never touches
 Android's TCP stack or `netd`.
 
 ## Design decisions
@@ -41,10 +41,10 @@ abstract socket name is a **process-wide** resource. When a surface was
 recreated, a second instance tried to bind a name the first still held:
 
 ```
-W Moreland: accept loop error: Address already in use    (x6)
-I Moreland: host connected
-I Moreland: stream 1920x1200@60 video/avc
-W Moreland: session ended: The surface has been released
+W PadPlay: accept loop error: Address already in use    (x6)
+I PadPlay: host connected
+I PadPlay: stream 1920x1200@60 video/avc
+W PadPlay: session ended: The surface has been released
 ```
 
 Two instances, and the one that *won* the socket was the stale one holding a
@@ -58,7 +58,7 @@ one that reports `isValid` before configuring the codec, and detaching closes
 the current session so its codec never renders into a dead surface.
 
 Belt and braces on the host side: the daemon issues
-`am force-stop com.moreland.display` before `am start`, so a stale process
+`am force-stop com.padplay.display` before `am start`, so a stale process
 from a previous run can never be the one holding the socket name.
 
 ### Async MediaCodec with backpressure
@@ -144,10 +144,10 @@ This is the HyperOS/MIUI restriction predicted in Stage 0. Two ways past it.
 already staged:
 
 ```bash
-adb push app/build/outputs/apk/release/app-release.apk /sdcard/Download/moreland.apk
+adb push app/build/outputs/apk/release/app-release.apk /sdcard/Download/padplay.apk
 ```
 
-On the tablet: **Files → Downloads → `moreland.apk` → Install**, granting
+On the tablet: **Files → Downloads → `padplay.apk` → Install**, granting
 the install permission when prompted.
 
 **Option B — enable ADB installs.** Settings → Additional settings → Developer
@@ -157,16 +157,16 @@ sometimes a SIM. Option A avoids that entirely.
 Verify:
 
 ```bash
-adb shell pm list packages com.moreland.display
+adb shell pm list packages com.padplay.display
 ```
 
 ## Running end to end
 
 ```bash
-./target/release/moreland --seconds 20
+./target/release/padplay --seconds 20
 ```
 
-The `moreland` binary orchestrates everything: creates the virtual output,
+The `padplay` binary orchestrates everything: creates the virtual output,
 installs the adb forward, launches the app, then captures → encodes → streams
 and reports round-trip statistics. The virtual output is an RAII guard and is
 removed on exit unless `--keep-output` is passed.
@@ -174,7 +174,7 @@ removed on exit unless `--keep-output` is passed.
 Diagnostics from the device:
 
 ```bash
-adb logcat -s Moreland
+adb logcat -s PadPlay
 ```
 
 ## Code
@@ -188,7 +188,7 @@ android/
   app/build.gradle.kts
   app/src/main/AndroidManifest.xml
   app/src/main/res/values/styles.xml
-  app/src/main/java/com/moreland/display/
+  app/src/main/java/com/padplay/display/
     Protocol.kt              wire format, mirrors crates/protocol
     VideoStream.kt           socket, MediaCodec, ack writer
     DisplayActivity.kt       fullscreen surface host

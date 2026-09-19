@@ -1,4 +1,4 @@
-# Moreland
+# PadPlay
 
 **Use an Android tablet as a second monitor on Linux/Wayland, over USB.**
 Wired, not wireless.
@@ -7,31 +7,7 @@ Plug the tablet in and a virtual monitor appears. Unplug it and the monitor
 disappears. Wayland-native, hardware-encoded, zero-copy on Hyprland - no VNC,
 no RDP, no X11.
 
-<sub>_More land: more screen real estate. And it lives next door to Wayland._</sub>
-
-> **This is a fork of [adiimanav/moreland](https://github.com/adiimanav/moreland),
-> maintained here at [anisharaz/padplay](https://github.com/anisharaz/padplay).**
-> Everything above the original's baseline stays credited to that project and
-> its contributors (Apache-2.0, license retained unmodified in
-> [LICENSE](LICENSE)). What this fork adds:
->
-> - **niri support** - a second, independently-built compositor backend.
->   niri implements neither `ext-image-copy-capture-v1` nor `wlr-screencopy`,
->   so this isn't just another `output.rs` case: it creates and captures a
->   virtual monitor through the `evdi` kernel driver instead (a synthesized
->   EDID, CVT-RB timings computed from scratch, CPU-mapped frames rather than
->   DMA-BUF). See [Compatibility](#compatibility) and
->   [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md#niri--works-via-evdi).
-> - **Constant frame rate on the evdi path** - paced to a fixed tick instead
->   of the damage-driven rate the Wayland capture path uses, so the tablet
->   gets a steady image instead of variable cadence.
-> - **A redesigned Android app** - a proper Home/Display mode split instead of
->   an always-immersive overlay, a restyled stats widget (animated, glanceable
->   FPS/latency readout), and reliability fixes so the app survives repeated
->   connect/disconnect cycles instead of needing to be relaunched.
->
-> This repo also holds the Android app and the Linux daemon side by side
-> (`android/`, `crates/`) rather than as separate projects.
+<sub>_Pad + Play: the tablet becomes a screen the moment you plug it in._</sub>
 
 ```
 ~19 ms    host → rendered on tablet, median round trip at 120 fps (Hyprland)
@@ -43,16 +19,17 @@ no RDP, no X11.
 > **Scope.** The Hyprland path above is verified on exactly one setup:
 > Hyprland + AMD VA-API + a Xiaomi Pad 6, and every number above is measured
 > on that hardware, not estimated - see [`docs/`](docs/) for how. The niri
-> path (evdi) is separately verified working, without the same latency
-> profiling done yet. Other GPUs are plausible and untested; other
-> compositors need work. See [Compatibility](#compatibility).
+> path (evdi) is separately verified working on Intel VA-API, without the
+> same latency profiling done yet. Other GPUs are plausible and untested;
+> other compositors need work. See [Compatibility](#compatibility).
 
 Plug the cable in, and the tablet becomes a monitor - no pairing, no app to
-launch on the host, no settings dialog:
-
-<img src="docs/media/moreland_demo.gif" alt="Plugging a tablet in over USB and it appearing as a second monitor in Hyprland" width="720">
+launch on the host, no settings dialog.
 
 ## How it works
+
+Two capture paths, chosen automatically by compositor. On Hyprland (or any
+compositor implementing `ext-image-copy-capture-v1`):
 
 ```
 Hyprland  ──IPC──▶  headless output, sized to your tablet's aspect ratio
@@ -74,6 +51,14 @@ The whole path from compositor to encoder is zero-copy: the buffer Hyprland
 renders into is the same buffer the video encoder reads. That holds only while
 the compositor renders on the GPU that encodes - on a dual-GPU laptop it is easy
 to have it silently not hold. See [Multi-GPU hosts](#multi-gpu-hosts).
+
+On niri, which implements neither `ext-image-copy-capture-v1` nor
+`wlr-screencopy`, the `evdi` kernel driver stands in for both capture and
+output creation at once: it presents a real DRM device that niri mode-sets
+like a physical monitor, and hands back CPU-mapped frames directly - no
+Wayland capture protocol needed. See
+[`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md#niri--works-via-evdi) for the
+full mechanics.
 
 ## Requirements
 
@@ -104,11 +89,11 @@ nothing here.
 ## Install
 
 ```bash
-git clone git@github.com:anisharaz/padplay.git moreland && cd moreland
+git clone git@github.com:anisharaz/padplay.git padplay && cd padplay
 ./install.sh
 ```
 
-Installs `~/.local/bin/moreland` and a systemd **user** unit. Nothing needs
+Installs `~/.local/bin/padplay` and a systemd **user** unit. Nothing needs
 root and nothing is written outside `$HOME`.
 
 ### Enable USB debugging
@@ -146,9 +131,9 @@ then on the tablet: **Files → Downloads → tap the APK → Install**.
 ### Run
 
 ```bash
-moreland                                          # foreground
-systemctl --user enable --now moreland.service    # on login
-journalctl --user -u moreland -f                  # logs
+padplay                                          # foreground
+systemctl --user enable --now padplay.service    # on login
+journalctl --user -u padplay -f                  # logs
 ```
 
 Plug the tablet in. A monitor appears; drag windows to it.
@@ -156,9 +141,9 @@ Plug the tablet in. A monitor appears; drag windows to it.
 ## Usage
 
 ```
-moreland                  watch for the tablet; stream whenever plugged in
-moreland --once           stream one session, then exit
-moreland --seconds 15     stop after 15 s and print latency statistics
+padplay                  watch for the tablet; stream whenever plugged in
+padplay --once           stream one session, then exit
+padplay --seconds 15     stop after 15 s and print latency statistics
 
 --max-width <PX>           cap the auto-detected width   [default: 1920]
 --native                   stream at the tablet's full panel resolution
@@ -168,14 +153,13 @@ moreland --seconds 15     stop after 15 s and print latency statistics
 --position <X>             x offset of the virtual output [default: -1536]
 --position-y <Y>           y offset of the virtual output [default: 0]
                            default sits to the left of a 1920x1080 primary
-                           at 0x0, this fork's own reference layout;
-                           override either axis to fit yours. Position is
-                           in logical (post-scale) pixels, so it depends on
-                           --scale
+                           at 0x0; override either axis to fit your layout.
+                           Position is in logical (post-scale) pixels, so
+                           it depends on --scale
 --scale <N>                virtual output scale           [default: 1.25]
                            niri only; the tablet panel is physically small,
                            so native scale reads tiny up close
---output-name <NAME>       name of the virtual output    [default: moreland]
+--output-name <NAME>       name of the virtual output    [default: padplay]
                            required on labwc, which cannot create one and
                            must be pointed at an existing headless output
 --show-cursor              composite the mouse cursor into the stream
@@ -273,21 +257,22 @@ terminals, and browsing; it is not fine for gaming or stylus work.
 | --------------------- | --------------------------------------------------------------------------------------------------- |
 | **Hyprland**          | Verified, including 0.56's Lua config parser (see below)                                            |
 | **niri**              | Verified, via the `evdi` kernel driver - niri implements neither `ext-image-copy-capture-v1` nor `wlr-screencopy`, so this backend creates and captures the virtual output through evdi instead of Wayland protocols ([details](docs/COMPATIBILITY.md#niri--works-via-evdi)) |
-| labwc                 | Works, contributed and used by its author, untested here - you create the headless output, moreland attaches to it ([details](docs/COMPATIBILITY.md#labwc--works-with-the-output-created-by-you)) |
+| labwc                 | Works, contributed and used by its author, untested here - you create the headless output, padplay attaches to it ([details](docs/COMPATIBILITY.md#labwc--works-with-the-output-created-by-you)) |
 | Sway / other wlroots  | Capture should work unchanged; output creation unimplemented                                        |
 | KDE Plasma (KWin)     | **Blocked, tested on KWin 6.7.4** - implements no `ext-`/`wlr-` capture protocol; needs a PipeWire backend |
 | GNOME (Mutter)        | Requires a portal/PipeWire capture backend; Mutter implements neither wlr nor ext capture protocols |
 | AMD VA-API            | Verified                                                                                            |
-| Intel / NVIDIA VA-API | Plausible, untested - modifiers are probed at runtime                                               |
+| Intel VA-API          | Verified (niri/evdi reference machine)                                                              |
+| NVIDIA VA-API         | Plausible, untested - modifiers are probed at runtime; needs real NVENC hardware, not just the driver |
 | Android 10+           | Verified on 14; nothing vendor-specific required                                                    |
 
 To check your own machine:
 
 ```bash
-./scripts/moreland-doctor.sh
+./scripts/padplay-doctor.sh
 ```
 
-It reports the compositor, the capture protocol, the VA-API encoder and the ADB
+It reports the compositor, the capture path, the VA-API encoder and the ADB
 link, and names whatever blocks you. Note that your **distribution is not the
 deciding factor** - the compositor is. Fedora or Debian running Hyprland should
 work; Arch running Plasma does not.
@@ -331,7 +316,8 @@ so it is harmless while the tablet is unplugged.
 - **No touch or pen input.** The tablet is a display only. `zwlr_virtual_pointer_v1`
   would add absolute-pointer input without root; true multi-touch needs `uinput`.
 - **The app must stay foregrounded.** Switching apps on the tablet stops the stream.
-- **No audio.** Video only.
+- **No audio yet.** Design work is done — see
+  [`docs/07-audio-proposal.md`](docs/07-audio-proposal.md) — implementation is next.
 - **Idle output drops to ~1 fps on Hyprland/labwc.** Correct, not a bug: those
   compositors do not render a static headless output, so a motionless screen
   costs almost nothing, and it jumps straight back to the configured rate on
@@ -356,7 +342,7 @@ on a shared or multi-user system:
 
 - Any local process able to reach `127.0.0.1:27183` can push frames to the
   tablet while the daemon is running.
-- Any app on the tablet can connect to the `localabstract:moreland` socket.
+- Any app on the tablet can connect to the `localabstract:padplay` socket.
   Abstract Unix sockets carry no filesystem permissions.
 
 Neither is exploitable for anything beyond drawing on the tablet's screen, and
@@ -402,9 +388,9 @@ wrong:
 ## Uninstall
 
 ```bash
-systemctl --user disable --now moreland.service
-rm -f ~/.local/bin/moreland ~/.config/systemd/user/moreland.service
-adb uninstall com.moreland.display
+systemctl --user disable --now padplay.service
+rm -f ~/.local/bin/padplay ~/.config/systemd/user/padplay.service
+adb uninstall com.padplay.display
 ```
 
 Full inventory in [`docs/REVERT.md`](docs/REVERT.md).
@@ -420,10 +406,13 @@ Especially wanted:
 - **Touch input** via `zwlr_virtual_pointer_v1`
 - **Latency measurements on the niri/evdi path** - the numbers in
   [Performance](#performance) are Hyprland-only so far
+- **Audio** - the design is done ([proposal](docs/07-audio-proposal.md)),
+  implementation is open
 
 Please include your compositor, GPU, driver version, and tablet model. A
 documented failure is more useful than silence.
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+Apache-2.0. See [LICENSE](LICENSE). Built starting from the architecture of
+[adiimanav/moreland](https://github.com/adiimanav/moreland).

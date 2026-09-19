@@ -117,7 +117,7 @@ impl Compositor {
                      kernel driver available (niri's path).\n\
                      Verified: Hyprland, niri. KDE Plasma and GNOME implement \
                      none of these and need a PipeWire capture backend first.\n\
-                     Run scripts/moreland-doctor.sh for a full report, and see \
+                     Run scripts/padplay-doctor.sh for a full report, and see \
                      docs/COMPATIBILITY.md."
                 )
             }

@@ -24,7 +24,7 @@ pub mod shm;
 /// Name we give the Hyprland virtual output. Hyprland accepts an explicit name
 /// on `output create headless`, so we never have to guess `HEADLESS-N` — its
 /// counter increments across creates and does not reset.
-pub const VIRTUAL_OUTPUT_NAME: &str = "moreland";
+pub const VIRTUAL_OUTPUT_NAME: &str = "padplay";
 
 /// `XR24` — opaque 8-bit BGRX, the format captured from the virtual output.
 pub const XR24: u32 = u32::from_le_bytes(*b"XR24");

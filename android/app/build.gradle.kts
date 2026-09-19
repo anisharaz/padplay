@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.moreland.display"
+    namespace = "com.padplay.display"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.moreland.display"
+        applicationId = "com.padplay.display"
         // API 29 is the floor for LocalServerSocket usage as written; the
         // target tablet is API 34.
         minSdk = 29

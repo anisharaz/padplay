@@ -29,7 +29,7 @@ impl ShmBuffer {
             .checked_mul(height)
             .context("frame size overflowed")? as u64;
 
-        let fd = memfd_create("moreland-capture", MemfdFlags::CLOEXEC)
+        let fd = memfd_create("padplay-capture", MemfdFlags::CLOEXEC)
             .context("creating memfd for capture buffer")?;
         ftruncate(&fd, size).context("sizing capture buffer")?;
 

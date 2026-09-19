@@ -36,7 +36,7 @@ pub const FRAME_HEADER_LEN: usize = 16;
 /// Default host-side port for `adb forward`.
 pub const DEFAULT_PORT: u16 = 27183;
 /// Abstract Unix socket the device app listens on.
-pub const SOCKET_NAME: &str = "moreland";
+pub const SOCKET_NAME: &str = "padplay";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]

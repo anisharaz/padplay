@@ -16,8 +16,8 @@ use transport::{adb, stream_header, Sender};
 
 use crate::output::VirtualOutput;
 
-const APP_PACKAGE: &str = "com.moreland.display";
-const APP_ACTIVITY: &str = "com.moreland.display/.DisplayActivity";
+const APP_PACKAGE: &str = "com.padplay.display";
+const APP_ACTIVITY: &str = "com.padplay.display/.DisplayActivity";
 
 /// Where captured frames come from — a Wayland capture protocol handing back
 /// DMA-BUF fds, or evdi handing back CPU-mapped bytes. Deliberately not a
@@ -412,7 +412,7 @@ fn report(trips: &[Duration], frames: u64, bytes: u64) {
     println!("  bytes sent        {:.1} MB", bytes as f64 / 1e6);
     println!("  acks received     {}", trips.len());
     if trips.is_empty() {
-        println!("\n  no acknowledgements — check `adb logcat -s Moreland`");
+        println!("\n  no acknowledgements — check `adb logcat -s PadPlay`");
         return;
     }
     let mut trips = trips.to_vec();

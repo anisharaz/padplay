@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "moreland"
+rootProject.name = "padplay"
 include(":app")

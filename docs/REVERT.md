@@ -3,7 +3,7 @@
 Complete inventory of what this project changes, and how to undo each item.
 
 Paths below use `$REPO` for wherever you cloned this:
-`export REPO=~/src/moreland`
+`export REPO=~/src/padplay`
 
 Ordered from least to most invasive. Nothing here is destructive to unrelated
 data, but read each section before running it.
@@ -26,20 +26,20 @@ Hyprland — or simply rebooting — clears them with no further action.
 Created by:
 
 ```bash
-hyprctl output create headless moreland
-hyprctl keyword monitor "moreland,1920x1200@60,1920x0,1"
+hyprctl output create headless padplay
+hyprctl keyword monitor "padplay,1920x1200@60,1920x0,1"
 ```
 
 Remove:
 
 ```bash
-hyprctl output remove moreland
+hyprctl output remove padplay
 ```
 
 Verify it is gone:
 
 ```bash
-hyprctl monitors all | grep -c moreland    # expect 0
+hyprctl monitors all | grep -c padplay    # expect 0
 ```
 
 Both commands affect only the running compositor. Neither was written to
@@ -164,10 +164,10 @@ Two cautions:
 Installed by `install.sh`, entirely inside `$HOME`:
 
 ```bash
-systemctl --user disable --now moreland.service
-rm -f ~/.config/systemd/user/moreland.service
-rm -f ~/.local/bin/moreland
-rm -f ~/.local/share/applications/moreland.desktop
+systemctl --user disable --now padplay.service
+rm -f ~/.config/systemd/user/padplay.service
+rm -f ~/.local/bin/padplay
+rm -f ~/.local/share/applications/padplay.desktop
 systemctl --user daemon-reload
 command -v kbuildsycoca6 >/dev/null && kbuildsycoca6 --noincremental
 ```
@@ -183,7 +183,7 @@ guards and removes the virtual output and adb forward. If the daemon was ever
 hard-killed (SIGKILL) instead, a phantom monitor may remain:
 
 ```bash
-hyprctl output remove moreland
+hyprctl output remove padplay
 adb forward --remove-all
 ```
 
@@ -195,11 +195,11 @@ adb forward --remove-all
 Installed by sideloading, so removal is a normal uninstall:
 
 ```bash
-adb uninstall com.moreland.display
-adb shell rm -f /sdcard/Download/moreland.apk
+adb uninstall com.padplay.display
+adb shell rm -f /sdcard/Download/padplay.apk
 ```
 
-Or from the tablet: long-press the **Moreland** icon → Uninstall.
+Or from the tablet: long-press the **PadPlay** icon → Uninstall.
 
 The Android build also added SDK components under `/opt/android-sdk`, shared
 with any other Android work on this machine — leave them unless you are certain
@@ -229,16 +229,16 @@ adb forward --remove-all
 
 ```bash
 # 1. compositor state
-hyprctl output remove moreland
+hyprctl output remove padplay
 
 # 2. stray test processes
 pkill -x kitty
 
 # 3. future stages (harmless if not yet installed)
-systemctl --user disable --now moreland.service 2>/dev/null
-rm -f ~/.config/systemd/user/moreland.service
+systemctl --user disable --now padplay.service 2>/dev/null
+rm -f ~/.config/systemd/user/padplay.service
 systemctl --user daemon-reload
-adb uninstall com.moreland.display 2>/dev/null
+adb uninstall com.padplay.display 2>/dev/null
 adb forward --remove-all 2>/dev/null
 
 # 4. adb server
@@ -256,8 +256,8 @@ Then disable USB debugging on the tablet (section 6).
 ## Verifying a clean revert
 
 ```bash
-hyprctl monitors all | grep -c moreland              # 0
-systemctl --user list-units | grep -c moreland # 0
+hyprctl monitors all | grep -c padplay              # 0
+systemctl --user list-units | grep -c padplay # 0
 adb devices -l                                        # empty (after tablet step)
 ls "$REPO"          # No such file or directory
 ```

@@ -59,10 +59,10 @@ give the unwind room.
 ### Automatic detection
 
 ```
-INFO moreland: watching for devices
-INFO moreland: device ABCD1234 connected
-INFO moreland::session: virtual output moreland at 1920x1200@60
-INFO moreland::session: streaming to ABCD1234
+INFO padplay: watching for devices
+INFO padplay: device ABCD1234 connected
+INFO padplay::session: virtual output padplay at 1920x1200@60
+INFO padplay::session: streaming to ABCD1234
 ```
 
 ### Recovery from device loss
@@ -72,12 +72,12 @@ unplug: the stream breaks and the tracker's connection dies. Observed:
 
 ```
 streaming to ABCD1234
-removed output moreland
+removed output padplay
 session ended: sending frame: Broken pipe (os error 32)
 device tracker lost: reading ADB length; reconnecting
 device ABCD1234 connected
 streaming to ABCD1234            <- resumed with no intervention
-removed output moreland
+removed output padplay
 session ended cleanly
 shutting down
 ```
@@ -85,7 +85,7 @@ shutting down
 After `SIGTERM`:
 
 ```
-monitors with moreland: 0
+monitors with padplay: 0
 adb forwards: []
 ```
 
@@ -122,8 +122,8 @@ Tablet panel confirmed at **144 Hz** during streaming.
 
 Nothing needs root and nothing is written outside `$HOME`:
 
-- `~/.local/bin/moreland`
-- `~/.config/systemd/user/moreland.service`
+- `~/.local/bin/padplay`
+- `~/.config/systemd/user/padplay.service`
 
 The installer deliberately **does not build the APK** — that needs the Android
 SDK, and a stale APK is worse than an absent one. It checks whether the app is
@@ -132,8 +132,8 @@ installed and prints the commands if not.
 Start on login:
 
 ```bash
-systemctl --user enable --now moreland.service
-journalctl --user -u moreland -f
+systemctl --user enable --now padplay.service
+journalctl --user -u padplay -f
 ```
 
 The unit is `PartOf=graphical-session.target`, so it starts with the session and
@@ -143,14 +143,14 @@ instance, and the daemon connects to Wayland as a capture client.
 ## Usage
 
 ```
-moreland                 watch for the tablet; stream whenever plugged in
-moreland --once          stream one session, then exit
-moreland --seconds 15    stop after 15 s, print latency statistics
-moreland --stats         print latency statistics on exit
-moreland --max-width 2400        cap the auto-detected width
-moreland --native                stream the tablet's full panel resolution
-moreland --width 2400 --height 1500   pin an explicit size (both required)
-moreland --bitrate 30000
+padplay                 watch for the tablet; stream whenever plugged in
+padplay --once          stream one session, then exit
+padplay --seconds 15    stop after 15 s, print latency statistics
+padplay --stats         print latency statistics on exit
+padplay --max-width 2400        cap the auto-detected width
+padplay --native                stream the tablet's full panel resolution
+padplay --width 2400 --height 1500   pin an explicit size (both required)
+padplay --bitrate 30000
 ```
 
 ## Code
@@ -162,6 +162,6 @@ crates/daemon/
   src/session.rs      one streaming session, RAII-scoped
   src/output.rs       virtual output guard, per-compositor
   src/usage.txt
-systemd/moreland.service
+systemd/padplay.service
 install.sh
 ```

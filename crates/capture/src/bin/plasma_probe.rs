@@ -64,8 +64,8 @@ fn main() -> Result<()> {
         None => {
             println!("creating virtual output {width}x{height} @ scale {scale}...");
             PlasmaVirtualOutput::create(
-                "moreland",
-                "Moreland tablet monitor",
+                "padplay",
+                "PadPlay tablet monitor",
                 width,
                 height,
                 scale,

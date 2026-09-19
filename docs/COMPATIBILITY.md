@@ -6,7 +6,7 @@ that it works. KDE Plasma has been tested and is **verified blocked** — the
 reasons are recorded below. labwc has a backend contributed and used by its
 author, untested by the maintainer. GNOME and Sway remain untested.
 
-Run [`scripts/moreland-doctor.sh`](../scripts/moreland-doctor.sh) to get this
+Run [`scripts/padplay-doctor.sh`](../scripts/padplay-doctor.sh) to get this
 answer for your own machine: it checks the compositor, the capture path, the
 VA-API encoder and the ADB link, and names what blocks you.
 
@@ -42,9 +42,9 @@ has to move too (see the niri section below).
 ### Hyprland — works
 
 ```bash
-hyprctl output create headless moreland
-hyprctl keyword monitor "moreland,1920x1200@60,1920x0,1"
-hyprctl output remove moreland
+hyprctl output create headless padplay
+hyprctl keyword monitor "padplay,1920x1200@60,1920x0,1"
+hyprctl output remove padplay
 ```
 
 Hyprland accepts an **explicit name**, which makes the result deterministic.
@@ -77,12 +77,12 @@ Wayland protocol.
 # node on load. `initial_device_count` matters -- without it the module
 # loads with zero devices and DeviceNode::get() (what EvdiOutput::connect
 # calls) finds nothing to open, module loaded or not.
-echo evdi | sudo tee /etc/modules-load.d/moreland-evdi.conf
+echo evdi | sudo tee /etc/modules-load.d/padplay-evdi.conf
 printf 'options evdi initial_device_count=1\nsoftdep evdi pre: drm_kms_helper\n' \
-    | sudo tee /etc/modprobe.d/moreland-evdi.conf
+    | sudo tee /etc/modprobe.d/padplay-evdi.conf
 sudo modprobe -r evdi 2>/dev/null; sudo modprobe evdi   # apply now, no reboot needed
 
-moreland   # detects niri via NIRI_SOCKET + a live `niri msg outputs` round-trip
+padplay   # detects niri via NIRI_SOCKET + a live `niri msg outputs` round-trip
 ```
 
 Check it took: `cat /sys/devices/evdi/count` should read `1`. That file, not just
@@ -121,7 +121,7 @@ What this costs, relative to the `ext-image-copy-capture-v1` path:
   niri's config keeps applying every time, same as it would for a real,
   always-plugged-in monitor. It only stops being predictable if a second evdi
   device node ever exists alongside it (`count` > 1) -- then niri hands out
-  `DVI-I-1`/`DVI-I-2` per device and which one moreland's `wlr-randr` diff
+  `DVI-I-1`/`DVI-I-2` per device and which one padplay's `wlr-randr` diff
   happens to discover on a given run is not guaranteed. Keep the device count
   at exactly one.
 - **`wlr-randr` is a runtime dependency**, used to position the output
@@ -169,16 +169,16 @@ backend inverts the contract the other two follow: rather than creating an
 output and removing it on drop, it **attaches to one that already exists** and
 leaves it exactly as it found it.
 
-That makes the output a property of your session, not of moreland, and you
+That makes the output a property of your session, not of padplay, and you
 provision it when labwc starts:
 
 ```bash
 WLR_HEADLESS_OUTPUTS=1 labwc      # or set it in your session/login script
 wlr-randr                          # lists it, usually as HEADLESS-1
-moreland --output-name HEADLESS-1
+padplay --output-name HEADLESS-1
 ```
 
-`--output-name` is **required** here. The default is `moreland`, a name
+`--output-name` is **required** here. The default is `padplay`, a name
 wlroots will never assign — it numbers headless outputs `HEADLESS-N` and
 offers no way to choose. Point it at an output that does not exist and the
 daemon says so at startup rather than failing per device event.
@@ -258,7 +258,7 @@ no root access is required. KWin matches the client's executable path rather
 than how it was launched. `Exec` must be an absolute path — the bare
 form is silently denied. `install.sh` writes this entry **only on a Plasma
 session**, so a Hyprland install is not littered with it; force it with
-`MORELAND_INSTALL_DESKTOP_ENTRY=1`. The mechanics and the traps are in
+`PADPLAY_INSTALL_DESKTOP_ENTRY=1`. The mechanics and the traps are in
 [06-plasma-backend.md](06-plasma-backend.md).
 
 Note that the portal is *not* the answer here: it appears unable to create
@@ -364,12 +364,12 @@ sudo apt install rustc cargo gstreamer1.0-plugins-base \
                  libva2 vainfo adb wayland-utils
 ```
 
-`scripts/moreland-doctor.sh` detects the distro and prints the matching line
+`scripts/padplay-doctor.sh` detects the distro and prints the matching line
 for whatever is missing.
 
 ## Contributing a compositor backend
 
-1. Confirm the capture protocols exist: `scripts/moreland-doctor.sh`, or by
+1. Confirm the capture protocols exist: `scripts/padplay-doctor.sh`, or by
    hand with `wayland-info | grep -E 'image_copy_capture|image_capture_source'`.
    If they are absent, there are two ways forward, not one: evdi (see the niri
    section above) if the compositor mode-sets DRM outputs like a normal

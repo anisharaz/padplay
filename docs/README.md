@@ -1,4 +1,4 @@
-# Moreland
+# PadPlay
 
 Turn a USB-connected Android tablet into a second monitor for Hyprland.
 
@@ -24,7 +24,7 @@ backed by a measurement taken on that hardware.
 ## Architecture
 
 ```
-Hyprland  ──hyprctl IPC──▶  virtual output "moreland" @ 1920x1200x60
+Hyprland  ──hyprctl IPC──▶  virtual output "padplay" @ 1920x1200x60
                                   │
    ext_output_image_capture_source_manager_v1
                     +
@@ -36,7 +36,7 @@ Hyprland  ──hyprctl IPC──▶  virtual output "moreland" @ 1920x1200x60
         vah264enc — VBR, no B-frames, target-usage 3
                                   │  [u32 len][u64 pts][Annex-B]
                                   ▼
-        host 127.0.0.1:27183 ──adb forward──▶ localabstract:moreland
+        host 127.0.0.1:27183 ──adb forward──▶ localabstract:padplay
                                   │  USB 2.0 bulk
                                   ▼
       Kotlin app: LocalServerSocket → MediaCodec async → SurfaceView
@@ -78,7 +78,7 @@ for why.
 
 ```bash
 ./install.sh
-systemctl --user enable --now moreland.service
+systemctl --user enable --now padplay.service
 ```
 
 Then plug the tablet in. Nothing needs root; nothing is written outside `$HOME`.

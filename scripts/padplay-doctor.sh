@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Report whether this machine can run moreland, and if not, what blocks it.
+# Report whether this machine can run padplay, and if not, what blocks it.
 #
 # Nothing here writes anything or needs root — it only reads. The distro is
 # detected solely to name packages; it is not what decides the answer. See the
@@ -22,7 +22,7 @@ if [ "${XDG_SESSION_TYPE:-}" = "wayland" ] && [ -n "${WAYLAND_DISPLAY:-}" ]; the
     pass "Wayland session (WAYLAND_DISPLAY=$WAYLAND_DISPLAY)"
 else
     fail "not a Wayland session (XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-unset})"
-    info "moreland is Wayland-only; there is no X11 path."
+    info "padplay is Wayland-only; there is no X11 path."
     block "not running Wayland"
 fi
 
@@ -53,7 +53,7 @@ case "$COMPOSITOR" in
     labwc)    pass "compositor: labwc — supported, community-tested"
               info "labwc cannot create an output at runtime. Start it with"
               info "WLR_HEADLESS_OUTPUTS=1 and pass the name wlr-randr lists"
-              info "(usually HEADLESS-1) as: moreland --output-name HEADLESS-1" ;;
+              info "(usually HEADLESS-1) as: padplay --output-name HEADLESS-1" ;;
     niri)     pass "compositor: niri — supported, verified"
               info "niri implements neither ext-image-copy-capture-v1 nor"
               info "wlr-screencopy, so this path uses evdi instead: a real DRM"
@@ -73,7 +73,7 @@ fi
 if [ "$COMPOSITOR" = "niri" ]; then
     # niri implements neither ext-image-copy-capture-v1 nor wlr-screencopy
     # (as of 26.04), so this check would fail every time regardless of
-    # whether moreland can actually run — it uses evdi's own kernel API
+    # whether padplay can actually run — it uses evdi's own kernel API
     # for capture instead, checked below rather than here.
     head_ "Capture (evdi, since niri implements no Wayland capture protocol)"
 
@@ -85,7 +85,7 @@ if [ "$COMPOSITOR" = "niri" ]; then
         elif [ "${COUNT:-0}" -gt 1 ] 2>/dev/null; then
             warn "evdi has $COUNT device nodes, not 1"
             info "niri assigns each its own connector name (DVI-I-1, DVI-I-2, ...)."
-            info "With more than one, which name moreland gets on a given run isn't"
+            info "With more than one, which name padplay gets on a given run isn't"
             info "guaranteed, and a static niri output {} block can't target it"
             info "reliably. Drop to one: sudo sh -c 'echo 1 > /sys/devices/evdi/remove_all'"
             info "then reload the module (see docs/COMPATIBILITY.md)."
@@ -154,7 +154,7 @@ fi
 if [ "${XDG_CURRENT_DESKTOP:-}" = "KDE" ]; then
     head_ "KDE backend prerequisites (groundwork; backend not yet implemented)"
 
-    ENTRY="$HOME/.local/share/applications/moreland.desktop"
+    ENTRY="$HOME/.local/share/applications/padplay.desktop"
     if [ -f "$ENTRY" ]; then
         pass "desktop entry installed"
         exec_line=$(grep -m1 '^Exec=' "$ENTRY" 2>/dev/null | cut -d= -f2-)
@@ -220,8 +220,8 @@ if command -v adb >/dev/null 2>&1; then
             MODEL=$(adb -s "$serial" shell getprop ro.product.model 2>/dev/null | tr -d '\r')
             SIZE=$(adb -s "$serial" shell wm size 2>/dev/null | tr -d '\r' | head -1)
             pass "device $serial — ${MODEL:-unknown} (${SIZE:-size unknown})"
-            if adb -s "$serial" shell pm list packages com.moreland.display 2>/dev/null \
-                | grep -q com.moreland.display; then
+            if adb -s "$serial" shell pm list packages com.padplay.display 2>/dev/null \
+                | grep -q com.padplay.display; then
                 pass "  tablet app installed"
             else
                 warn "  tablet app NOT installed — see README 'Install'"

@@ -16,5 +16,5 @@ transport.workspace = true
 protocol.workspace = true
 
 [[bin]]
-name = "moreland"
+name = "padplay"
 path = "src/main.rs"

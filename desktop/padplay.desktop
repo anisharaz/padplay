@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=Moreland
+Name=PadPlay
 Comment=Use an Android tablet as a second monitor over USB
-Exec=/usr/bin/moreland
+Exec=/usr/bin/padplay
 NoDisplay=true
 Terminal=false
 

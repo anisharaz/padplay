@@ -22,7 +22,7 @@ use transport::{adb, stream_header, Sender};
 /// Device-side port `nc` listens on; the host port forwards to it.
 const DEVICE_PORT: u16 = 27184;
 
-const SINK_PATH: &str = "/data/local/tmp/moreland-sink.bin";
+const SINK_PATH: &str = "/data/local/tmp/padplay-sink.bin";
 
 struct DeviceSink {
     child: Child,
@@ -41,7 +41,7 @@ impl DeviceSink {
         // connection, and closes it before reading a single byte — which looks
         // exactly like a working transport from the host side, because adb
         // happily drains everything written into a dead forward.
-        let child = Command::new(std::env::var("MORELAND_ADB").unwrap_or_else(|_| "adb".into()))
+        let child = Command::new(std::env::var("PADPLAY_ADB").unwrap_or_else(|_| "adb".into()))
             .args([
                 "-s",
                 serial,

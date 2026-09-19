@@ -10,8 +10,8 @@ without ever touching pixels on the CPU.
 Hyprland creates headless outputs over its IPC:
 
 ```bash
-hyprctl output create headless moreland
-hyprctl keyword monitor "moreland,1920x1200@60,1920x0,1"
+hyprctl output create headless padplay
+hyprctl keyword monitor "padplay,1920x1200@60,1920x0,1"
 ```
 
 ### Name the output explicitly
@@ -28,7 +28,7 @@ name lives in `capture::VIRTUAL_OUTPUT_NAME`.
 Removal:
 
 ```bash
-hyprctl output remove moreland
+hyprctl output remove padplay
 ```
 
 ## Capture protocol
@@ -178,10 +178,10 @@ crates/capture/
 ./target/release/capture-probe
 
 # benchmark zero-copy capture
-./target/release/capture-probe moreland --dmabuf --frames 180
+./target/release/capture-probe padplay --dmabuf --frames 180
 
 # visual check (shm only — DMA-BUF pixels are never CPU-mapped)
-./target/release/capture-probe moreland --shm --frames 30 --png /tmp/frame.png
+./target/release/capture-probe padplay --shm --frames 30 --png /tmp/frame.png
 ```
 
 For a meaningful frame-rate measurement the output needs continuous damage,

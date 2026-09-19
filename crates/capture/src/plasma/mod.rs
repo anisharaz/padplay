@@ -306,7 +306,7 @@ impl PlasmaVirtualOutput {
                      KWin only advertises it to a client whose desktop entry declares\n\
                      \x20   X-KDE-Wayland-Interfaces={INTERFACE}\n\
                      with an absolute Exec path, and it denies it silently otherwise.\n\
-                     Check `scripts/moreland-doctor.sh`, and remember KWin reads the\n\
+                     Check `scripts/padplay-doctor.sh`, and remember KWin reads the\n\
                      KService cache: run `kbuildsycoca6 --noincremental` after any change.\n\
                      If you are not on KDE, this backend is the wrong one."
                 )
