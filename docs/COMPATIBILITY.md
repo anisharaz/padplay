@@ -85,10 +85,11 @@ sudo modprobe -r evdi 2>/dev/null; sudo modprobe evdi   # apply now, no reboot n
 moreland   # detects niri via NIRI_SOCKET + a live `niri msg outputs` round-trip
 ```
 
-Check it took: `cat /sys/devices/evdi/count` should read `1` or higher. That file, not
-just `lsmod`, is the real signal -- the module can be loaded with zero devices if
+Check it took: `cat /sys/devices/evdi/count` should read `1`. That file, not just
+`lsmod`, is the real signal -- the module can be loaded with zero devices if
 `initial_device_count` was never set, and `DeviceNode::get()` has nothing to open in
-that state even though the module itself is present.
+that state even though the module itself is present. Keep it at exactly `1`, not
+more -- see the connector-naming note below for why that matters.
 
 What this costs, relative to the `ext-image-copy-capture-v1` path:
 
@@ -110,6 +111,19 @@ What this costs, relative to the `ext-image-copy-capture-v1` path:
   subsequent read). See `EvdiOutput::connect` / `PendingEvdiOutput::finish`
   in `crates/capture/src/evdi_backend/mod.rs` for the full sequence and why
   the split exists.
+
+  "Discovered, not chosen" does not mean unstable, though: the name comes
+  from the DRM connector's own type + index (`DVI-I-1`), which is a property
+  of the evdi *device node*, not of any individual connect/disconnect cycle.
+  With exactly one evdi device node (`/sys/devices/evdi/count` == `1`), that
+  connector is created once, persists across reboots and daemon restarts, and
+  is always `DVI-I-1` -- so a static `output "DVI-I-1" { ... }` block in
+  niri's config keeps applying every time, same as it would for a real,
+  always-plugged-in monitor. It only stops being predictable if a second evdi
+  device node ever exists alongside it (`count` > 1) -- then niri hands out
+  `DVI-I-1`/`DVI-I-2` per device and which one moreland's `wlr-randr` diff
+  happens to discover on a given run is not guaranteed. Keep the device count
+  at exactly one.
 - **`wlr-randr` is a runtime dependency**, used to position the output
   (niri's own default placement for a newly connected monitor is not
   configurable at connect time) and to discover the connector name.

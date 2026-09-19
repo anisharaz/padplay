@@ -96,8 +96,17 @@ fn parse_args() -> Args {
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                // `evdi` logs its own internal open/connect/disconnect sequence at
+                // INFO, and — far noisier — a WARN on every single capture
+                // timeout, even though that is the expected, non-fatal "nothing
+                // new yet" case `EvdiOutput::capture_frame` already handles (see
+                // its doc comment). At a paced ~60fps tick that is dozens of WARN
+                // lines a second drowning out the daemon's own handful of
+                // lifecycle logs. Set RUST_LOG=evdi=warn (or more) to bring it
+                // back for debugging the evdi path itself.
+                "info,evdi=off".into()
+            }),
         )
         .init();
 

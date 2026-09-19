@@ -80,8 +80,15 @@ if [ "$COMPOSITOR" = "niri" ]; then
     if [ -d /sys/devices/evdi ]; then
         pass "evdi kernel module loaded"
         COUNT=$(cat /sys/devices/evdi/count 2>/dev/null || echo 0)
-        if [ "${COUNT:-0}" -gt 0 ] 2>/dev/null; then
-            pass "evdi device node present ($COUNT)"
+        if [ "${COUNT:-0}" -eq 1 ] 2>/dev/null; then
+            pass "evdi device node present (1) — connector name will be stable"
+        elif [ "${COUNT:-0}" -gt 1 ] 2>/dev/null; then
+            warn "evdi has $COUNT device nodes, not 1"
+            info "niri assigns each its own connector name (DVI-I-1, DVI-I-2, ...)."
+            info "With more than one, which name moreland gets on a given run isn't"
+            info "guaranteed, and a static niri output {} block can't target it"
+            info "reliably. Drop to one: sudo sh -c 'echo 1 > /sys/devices/evdi/remove_all'"
+            info "then reload the module (see docs/COMPATIBILITY.md)."
         else
             fail "evdi module loaded but with zero devices (initial_device_count=0)"
             block "no evdi device node — see the one-time setup in docs/COMPATIBILITY.md#niri--works-via-evdi"
