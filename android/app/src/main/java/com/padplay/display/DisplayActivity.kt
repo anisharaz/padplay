@@ -51,6 +51,7 @@ class DisplayActivity : Activity(), SurfaceHolder.Callback {
     private lateinit var homeStatus: TextView
 
     private val stream = VideoStream()
+    private val audioStream = AudioStream().also { stream.audioSink = it }
     private var mode = Mode.HOME
     private var lastFramesDecoded = 0L
     private var lastFpsSampleAtMs = 0L
@@ -126,7 +127,13 @@ class DisplayActivity : Activity(), SurfaceHolder.Callback {
             }
             acceptSwitch = Switch(this@DisplayActivity).apply {
                 setOnCheckedChangeListener { _: CompoundButton, checked: Boolean ->
-                    if (checked) stream.start() else stream.stop()
+                    if (checked) {
+                        stream.start()
+                        audioStream.start()
+                    } else {
+                        stream.stop()
+                        audioStream.stop()
+                    }
                     refresh()
                 }
             }
@@ -212,6 +219,7 @@ class DisplayActivity : Activity(), SurfaceHolder.Callback {
 
     override fun onDestroy() {
         stream.stop()
+        audioStream.stop()
         super.onDestroy()
     }
 

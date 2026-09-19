@@ -16,13 +16,21 @@ object Protocol {
     const val SOCKET_NAME = "padplay"
 
     private const val MAGIC = 0x4D524C44 // "MRLD"
-    const val VERSION = 1
+    const val VERSION = 2
 
-    const val STREAM_HEADER_LEN = 16
+    const val STREAM_HEADER_LEN = 24
     const val FRAME_HEADER_LEN = 16
     const val ACK_LEN = 8
 
     const val FLAG_KEYFRAME = 0x01
+
+    /** `FrameHeader.streamType` — which decode path a frame's payload belongs to. */
+    const val STREAM_TYPE_VIDEO = 0
+    const val STREAM_TYPE_AUDIO = 1
+
+    /** `StreamHeader.audioCodec` — whether an audio track is present at all. */
+    const val AUDIO_CODEC_NONE = 0
+    const val AUDIO_CODEC_OPUS = 1
 
     /** Refuse absurd frame lengths rather than attempting the allocation. */
     const val MAX_FRAME_BYTES = 8 * 1024 * 1024
@@ -32,12 +40,20 @@ object Protocol {
         val height: Int,
         val framerate: Int,
         val mime: String,
-    )
+        val audioCodec: Int,
+        val audioSampleRateHz: Int,
+        val audioChannels: Int,
+        val audioPreSkip: Int,
+    ) {
+        /** Whether the host is sending an audio track at all. */
+        val hasAudio: Boolean get() = audioCodec != AUDIO_CODEC_NONE
+    }
 
     data class FrameHeader(
         val length: Int,
         val ptsNs: Long,
         val keyframe: Boolean,
+        val streamType: Int,
     )
 
     @Throws(IOException::class)
@@ -54,14 +70,30 @@ object Protocol {
         val height = input.readUnsignedShort()
         val framerate = input.readUnsignedShort()
         val codec = input.readUnsignedByte()
-        input.skipBytes(3) // reserved
+        val audioCodec = input.readUnsignedByte()
+        val audioSampleRateHz = input.readUnsignedShort()
+        val audioChannels = input.readUnsignedByte()
+        val audioPreSkip = input.readUnsignedShort()
+        input.skipBytes(5) // reserved
 
         val mime = when (codec) {
             0 -> "video/avc"
             1 -> "video/hevc"
             else -> throw IOException("unknown codec id $codec")
         }
-        return StreamHeader(width, height, framerate, mime)
+        if (audioCodec != AUDIO_CODEC_NONE && audioCodec != AUDIO_CODEC_OPUS) {
+            throw IOException("unknown audio codec id $audioCodec")
+        }
+        return StreamHeader(
+            width,
+            height,
+            framerate,
+            mime,
+            audioCodec,
+            audioSampleRateHz,
+            audioChannels,
+            audioPreSkip,
+        )
     }
 
     @Throws(IOException::class)
@@ -72,8 +104,9 @@ object Protocol {
         }
         val ptsNs = input.readLong()
         val flags = input.readUnsignedByte()
-        input.skipBytes(3) // reserved
-        return FrameHeader(length, ptsNs, flags and FLAG_KEYFRAME != 0)
+        val streamType = input.readUnsignedByte()
+        input.skipBytes(2) // reserved
+        return FrameHeader(length, ptsNs, flags and FLAG_KEYFRAME != 0, streamType)
     }
 
     @Throws(IOException::class)

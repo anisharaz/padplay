@@ -79,6 +79,15 @@ class VideoStream {
     @Volatile private var surface: Surface? = null
     /** The live decoder, so its output surface can be swapped in place. */
     @Volatile private var codec: MediaCodec? = null
+    /**
+     * Where demuxed audio frames go, if anyone's listening. This is the only
+     * bridge between this class and audio decode/playback — the read loop
+     * below stays the single demuxer, and knows nothing about `AudioStream`
+     * beyond this narrow interface. Null (the default) means audio frames,
+     * if any arrive, are read and silently discarded — never a reason to
+     * fail the video path.
+     */
+    @Volatile var audioSink: AudioSink? = null
     private var serverSocket: LocalServerSocket? = null
     private var client: LocalSocket? = null
     private var thread: Thread? = null
@@ -194,6 +203,7 @@ class VideoStream {
         val header = Protocol.readStreamHeader(input)
         Log.i(TAG, "stream ${header.width}x${header.height}@${header.framerate} ${header.mime}")
         streamInfo = "${header.width}x${header.height}@${header.framerate}"
+        audioSink?.onStreamHeader(header)
 
         val target = awaitSurface()
         freeInputs.clear()
@@ -213,18 +223,32 @@ class VideoStream {
                 }
                 Protocol.readFully(input, scratch, frame.length)
 
-                val index = freeInputs.poll(INPUT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                if (index == null) {
-                    Log.w(TAG, "decoder starved of input buffers; dropping frame")
-                    continue
-                }
-                val inputBuffer = codec.getInputBuffer(index) ?: continue
-                inputBuffer.clear()
-                inputBuffer.put(scratch, 0, frame.length)
+                // This read loop is the single demuxer for the whole
+                // connection — video and audio frames arrive interleaved on
+                // the one socket, tagged by streamType. Video path below is
+                // unchanged from before audio existed; audio is handed off
+                // through the narrow AudioSink interface and this loop moves
+                // straight on to the next frame header.
+                when (frame.streamType) {
+                    Protocol.STREAM_TYPE_AUDIO -> {
+                        audioSink?.onAudioFrame(scratch, frame.length, frame.ptsNs)
+                    }
+                    Protocol.STREAM_TYPE_VIDEO -> {
+                        val index = freeInputs.poll(INPUT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                        if (index == null) {
+                            Log.w(TAG, "decoder starved of input buffers; dropping frame")
+                            continue
+                        }
+                        val inputBuffer = codec.getInputBuffer(index) ?: continue
+                        inputBuffer.clear()
+                        inputBuffer.put(scratch, 0, frame.length)
 
-                val flags = if (frame.keyframe) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
-                // MediaCodec timestamps are microseconds; the wire uses nanoseconds.
-                codec.queueInputBuffer(index, 0, frame.length, frame.ptsNs / 1000, flags)
+                        val flags = if (frame.keyframe) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
+                        // MediaCodec timestamps are microseconds; the wire uses nanoseconds.
+                        codec.queueInputBuffer(index, 0, frame.length, frame.ptsNs / 1000, flags)
+                    }
+                    else -> Log.w(TAG, "unknown stream type ${frame.streamType}; dropping frame")
+                }
             }
         } finally {
             this.codec = null
@@ -232,6 +256,7 @@ class VideoStream {
             runCatching { codec.release() }
             ackThread?.interrupt()
             ackThread = null
+            audioSink?.onSessionEnded()
         }
     }
 
