@@ -331,6 +331,7 @@ impl VirtualOutput {
         refresh: u32,
         x: i32,
         y: i32,
+        scale: f64,
     ) -> Result<Self> {
         let compositor = Compositor::detect();
         match compositor {
@@ -371,7 +372,7 @@ impl VirtualOutput {
                     .context("creating evdi virtual output")?;
                 let discovered = discover_new_output(&before)
                     .context("finding the evdi output in wlr-randr's output list")?;
-                position_output(&discovered, width, height, x, y)
+                position_output(&discovered, width, height, x, y, scale)
                     .context("positioning evdi output via wlr-randr")?;
                 // Registering the buffer only after positioning matters: a
                 // buffer registered before this reconfiguration ends up
@@ -524,7 +525,7 @@ fn discover_new_output(before: &[String]) -> Result<String> {
 /// evdi's connector mode-sets itself (see `evdi_backend::EvdiOutput::create`),
 /// but niri still puts a newly connected output wherever its own default
 /// layout picks, not where the tablet's session wants it.
-fn position_output(name: &str, width: u32, height: u32, x: i32, y: i32) -> Result<()> {
+fn position_output(name: &str, width: u32, height: u32, x: i32, y: i32, scale: f64) -> Result<()> {
     run(
         "wlr-randr",
         &[
@@ -536,7 +537,7 @@ fn position_output(name: &str, width: u32, height: u32, x: i32, y: i32) -> Resul
             "--pos",
             &format!("{x},{y}"),
             "--scale",
-            "1.000000",
+            &format!("{scale:.6}"),
         ],
     )
     .map(drop)

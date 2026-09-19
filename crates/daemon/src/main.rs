@@ -55,6 +55,12 @@ fn parse_args() -> Args {
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(config.position_y);
             }
+            "--scale" => {
+                config.scale = it
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(config.scale);
+            }
             "--output-name" => {
                 if let Some(name) = it.next() {
                     config.output_name = name;

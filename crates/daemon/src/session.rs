@@ -96,6 +96,12 @@ pub struct Config {
     pub bitrate_kbps: u32,
     pub position_x: i32,
     pub position_y: i32,
+    /// Output scale, applied via `wlr-randr --scale` on the niri path (see
+    /// `output::position_output`). Managed compositors that create their own
+    /// headless output (Hyprland) or attach to a pre-existing one (labwc)
+    /// don't go through this — scale there is whatever the compositor already
+    /// has configured for that output.
+    pub scale: f64,
     pub output_name: String,
     /// Composite the mouse cursor into the streamed frames.
     pub paint_cursor: bool,
@@ -118,14 +124,24 @@ impl Default for Config {
             bitrate_kbps: 20_000,
             // To the left of a 1920x1080 primary at 0x0 — this fork's own
             // reference layout (see `~/.config/niri/config.d/output.kdl`,
-            // which places the evdi connector at the same x=-1920, y=0 as a
+            // which places the evdi connector at the same x=-1280, y=0 as a
             // static pre-connect default). The daemon's own `wlr-randr`
             // reposition on every niri connect always wins over that static
             // config, so the two need to agree, and this is the one that
             // actually matches the hardware this fork runs on. Override with
             // `--position`/`--position-y` if your layout differs.
-            position_x: -1920,
+            //
+            // -1280, not -1920: position is in logical (post-scale) pixels,
+            // and at `scale` 1.5 a physically-1920px-wide output is only
+            // 1920 / 1.5 = 1280 logical px wide. Using the physical width
+            // here would leave a 640px dead zone between the two outputs
+            // that the cursor can't cross by moving off either edge.
+            position_x: -1280,
             position_y: 0,
+            // The tablet panel is physically small (11"), so content at
+            // native scale reads tiny up close. 1.5 is a starting point, not
+            // a measurement — override with --scale to taste.
+            scale: 1.5,
             output_name: capture::VIRTUAL_OUTPUT_NAME.to_string(),
             paint_cursor: false,
             stats: false,
@@ -176,6 +192,7 @@ pub fn run(serial: &str, config: &Config, shutdown: &AtomicBool) -> Result<()> {
         config.fps,
         config.position_x,
         config.position_y,
+        config.scale,
     )?;
     if output.applied_mode() {
         tracing::info!(
