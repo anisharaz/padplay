@@ -77,11 +77,18 @@ if [ "$COMPOSITOR" = "niri" ]; then
     # for capture instead, checked below rather than here.
     head_ "Capture (evdi, since niri implements no Wayland capture protocol)"
 
-    if [ -e /dev/dri/card* ] && ls /sys/devices/virtual/misc/evdi* >/dev/null 2>&1; then
-        pass "evdi device node present"
+    if [ -d /sys/devices/evdi ]; then
+        pass "evdi kernel module loaded"
+        COUNT=$(cat /sys/devices/evdi/count 2>/dev/null || echo 0)
+        if [ "${COUNT:-0}" -gt 0 ] 2>/dev/null; then
+            pass "evdi device node present ($COUNT)"
+        else
+            fail "evdi module loaded but with zero devices (initial_device_count=0)"
+            block "no evdi device node — see the one-time setup in docs/COMPATIBILITY.md#niri--works-via-evdi"
+        fi
     else
-        fail "no evdi device node found"
-        block "evdi kernel module not loaded — see docs/ for one-time setup"
+        fail "evdi kernel module not loaded"
+        block "evdi kernel module not loaded — run: sudo modprobe evdi"
     fi
 
     if command -v wlr-randr >/dev/null 2>&1; then

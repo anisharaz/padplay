@@ -73,12 +73,22 @@ perspective. It hands frames back through its own kernel API instead of a
 Wayland protocol.
 
 ```bash
-# one-time setup: load the module and grant this user its device node
-sudo modprobe evdi
-sudo udevadm control --reload && sudo udevadm trigger
+# one-time setup: load the module at boot, and tell it to create one device
+# node on load. `initial_device_count` matters -- without it the module
+# loads with zero devices and DeviceNode::get() (what EvdiOutput::connect
+# calls) finds nothing to open, module loaded or not.
+echo evdi | sudo tee /etc/modules-load.d/moreland-evdi.conf
+printf 'options evdi initial_device_count=1\nsoftdep evdi pre: drm_kms_helper\n' \
+    | sudo tee /etc/modprobe.d/moreland-evdi.conf
+sudo modprobe -r evdi 2>/dev/null; sudo modprobe evdi   # apply now, no reboot needed
 
 moreland   # detects niri via NIRI_SOCKET + a live `niri msg outputs` round-trip
 ```
+
+Check it took: `cat /sys/devices/evdi/count` should read `1` or higher. That file, not
+just `lsmod`, is the real signal -- the module can be loaded with zero devices if
+`initial_device_count` was never set, and `DeviceNode::get()` has nothing to open in
+that state even though the module itself is present.
 
 What this costs, relative to the `ext-image-copy-capture-v1` path:
 
