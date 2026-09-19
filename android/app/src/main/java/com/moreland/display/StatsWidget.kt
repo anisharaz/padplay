@@ -24,9 +24,9 @@ import android.widget.TextView
  * an "alert dialog", not a panel: nothing about it is present on screen
  * until asked for.
  *
- * The dot itself is the only thing shown by default: small, low-alpha,
- * tinted by connection state, and pulsing only while live — enough to
- * confirm "is this working" at a glance without competing with the picture.
+ * The dot itself is the only thing shown by default: small, low-alpha, static,
+ * tinted by connection state — enough to confirm "is this working" at a
+ * glance without competing with the picture or drawing the eye with motion.
  * Tapping it dims the screen and centers a card with the full readout
  * (status, FPS, resolution, frame count, last-frame age); tapping the
  * scrim or the close button dismisses it the same way a web alert dialog
@@ -209,7 +209,6 @@ class StatsWidget(private val context: Context, root: FrameLayout) {
 
     private var visible = false
     private var pulsing = false
-    private val indicatorPulse = pulseAnimator(indicatorDot)
     private val dialogPulse = pulseAnimator(dialogDot)
 
     init {
@@ -217,17 +216,13 @@ class StatsWidget(private val context: Context, root: FrameLayout) {
         root.addView(
             indicatorTouchTarget,
             FrameLayout.LayoutParams(dp(44), dp(44)).apply {
-                gravity = Gravity.TOP or Gravity.END
-                topMargin = dp(14)
-                rightMargin = dp(14)
+                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                leftMargin = dp(14)
             },
         )
         root.addView(scrim, FrameLayout.LayoutParams(MATCH, MATCH))
 
-        indicatorTouchTarget.setOnClickListener {
-            bounce(indicatorDot)
-            show()
-        }
+        indicatorTouchTarget.setOnClickListener { show() }
         // Consume clicks on the card itself so they don't fall through to
         // the scrim's dismiss handler underneath it.
         dialogCard.setOnClickListener { }
@@ -311,18 +306,18 @@ class StatsWidget(private val context: Context, root: FrameLayout) {
         errorText.text = lastError
     }
 
+    /** Only [dialogDot], inside the opened dialog, ever pulses — the
+     * always-visible [indicatorDot] stays static so it stays out of the way. */
     private fun setPulsing(shouldPulse: Boolean) {
         if (shouldPulse == pulsing) return
         pulsing = shouldPulse
-        for ((animator, view) in listOf(indicatorPulse to indicatorDot, dialogPulse to dialogDot)) {
-            if (shouldPulse) {
-                animator.start()
-            } else {
-                animator.cancel()
-                view.scaleX = 1f
-                view.scaleY = 1f
-                view.alpha = if (view === indicatorDot) DOT_ALPHA_IDLE else 1f
-            }
+        if (shouldPulse) {
+            dialogPulse.start()
+        } else {
+            dialogPulse.cancel()
+            dialogDot.scaleX = 1f
+            dialogDot.scaleY = 1f
+            dialogDot.alpha = 1f
         }
     }
 
@@ -335,29 +330,14 @@ class StatsWidget(private val context: Context, root: FrameLayout) {
             duration = 1100
             repeatMode = ValueAnimator.REVERSE
             repeatCount = ValueAnimator.INFINITE
-            val baseAlpha = if (view === indicatorDot) DOT_ALPHA_IDLE else 1f
             addUpdateListener {
                 val t = it.animatedFraction
                 val scale = 1f + 0.35f * t
                 view.scaleX = scale
                 view.scaleY = scale
-                view.alpha = baseAlpha - (baseAlpha * 0.5f) * t
+                view.alpha = 1f - 0.5f * t
             }
         }
-
-    /** Quick press feedback: scale down and spring back. */
-    private fun bounce(view: View) {
-        ObjectAnimator.ofFloat(view, "scaleX", 1f, 0.8f, 1f).apply {
-            duration = 200
-            interpolator = OvershootInterpolator(3f)
-            start()
-        }
-        ObjectAnimator.ofFloat(view, "scaleY", 1f, 0.8f, 1f).apply {
-            duration = 200
-            interpolator = OvershootInterpolator(3f)
-            start()
-        }
-    }
 
     /** `versionName@versionCode`, so a rebuilt-and-reinstalled APK is
      * distinguishable on screen from whatever was running before it —
