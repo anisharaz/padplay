@@ -69,12 +69,16 @@ full mechanics.
 - A GPU with VA-API encode - AMD, Intel, or NVIDIA via `nvidia-vaapi-driver`
 - `gstreamer`, `gst-plugins-base`, `gst-plugin-va`, `libva`
 - `android-tools` (adb), Rust toolchain
+- Optional, for host audio: `gst-plugin-pipewire` and a live PipeWire server
+  (see [Compatibility](#compatibility)). Missing either just means no audio -
+  video is unaffected.
 
 Arch / EndeavourOS:
 
 ```bash
 sudo pacman -S --needed rust gstreamer gst-plugins-base gst-plugins-good \
-                        gst-plugin-va libva android-tools android-udev wayland-utils
+                        gst-plugin-va libva android-tools android-udev \
+                        wayland-utils gst-plugin-pipewire
 ```
 
 **Tablet**
@@ -163,6 +167,9 @@ padplay --seconds 15     stop after 15 s and print latency statistics
                            required on labwc, which cannot create one and
                            must be pointed at an existing headless output
 --show-cursor              composite the mouse cursor into the stream
+--no-audio                 disable host audio capture     [default: on]
+                           audio never blocks video - missing prerequisites
+                           (see Compatibility) just mean no audio, silently
 ```
 
 **Resolution is automatic.** The daemon reads the tablet's panel size over ADB
@@ -316,8 +323,10 @@ so it is harmless while the tablet is unplugged.
 - **No touch or pen input.** The tablet is a display only. `zwlr_virtual_pointer_v1`
   would add absolute-pointer input without root; true multi-touch needs `uinput`.
 - **The app must stay foregrounded.** Switching apps on the tablet stops the stream.
-- **No audio yet.** Design work is done — see
-  [`docs/07-audio-proposal.md`](docs/07-audio-proposal.md) — implementation is next.
+- **Audio latency is unmeasured.** Host system audio streams to the tablet's
+  speaker by default (Opus over the same connection, `--no-audio` to disable) —
+  see [`docs/07-audio-proposal.md`](docs/07-audio-proposal.md) for the design.
+  It hasn't had the same latency profiling pass the video path has.
 - **Idle output drops to ~1 fps on Hyprland/labwc.** Correct, not a bug: those
   compositors do not render a static headless output, so a motionless screen
   costs almost nothing, and it jumps straight back to the configured rate on
@@ -350,7 +359,9 @@ neither reaches back into the host. But this is a single-user desktop tool and
 is not hardened for a hostile local user.
 
 **The app requests no Android permissions at all** - not even `INTERNET`. It can
-draw to its own surface and nothing else.
+draw to its own surface and nothing else. Audio playback (`AudioTrack`) is
+output-only and needed no new permission either - the tablet never captures
+anything, it only plays PCM the host already decoded and sent.
 
 **Wire data is bounds-checked** on both sides: magic and version on the stream
 header, and a frame-length cap on the device so a malformed length cannot drive
@@ -406,8 +417,8 @@ Especially wanted:
 - **Touch input** via `zwlr_virtual_pointer_v1`
 - **Latency measurements on the niri/evdi path** - the numbers in
   [Performance](#performance) are Hyprland-only so far
-- **Audio** - the design is done ([proposal](docs/07-audio-proposal.md)),
-  implementation is open
+- **Audio latency measurements** - implemented ([design](docs/07-audio-proposal.md)),
+  but unlike video it hasn't had a real latency/sync profiling pass yet
 
 Please include your compositor, GPU, driver version, and tablet model. A
 documented failure is more useful than silence.

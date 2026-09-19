@@ -17,9 +17,9 @@ OPTIONS
     --position <X>      x offset of the virtual output [default: -1536]
     --position-y <Y>    y offset of the virtual output [default: 0]
                         default sits to the left of a 1920x1080 primary at
-                        0x0, this fork's own reference layout; override
-                        either axis to fit yours. Position is in logical
-                        (post-scale) pixels, so it depends on --scale
+                        0x0; override either axis to fit your layout.
+                        Position is in logical (post-scale) pixels, so it
+                        depends on --scale
     --scale <N>         virtual output scale            [default: 1.25]
                         niri only; the tablet panel is physically small, so
                         native scale reads tiny up close
@@ -28,6 +28,7 @@ OPTIONS
                         required on labwc, which cannot create one and must
                         be pointed at an existing headless output
     --show-cursor       composite the mouse cursor into the stream
+    --no-audio          disable host audio capture      [default: on]
 
     --once              stream one session, then exit
     --seconds <N>       stop after N seconds (implies --once and --stats)

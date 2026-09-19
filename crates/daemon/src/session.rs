@@ -3,6 +3,7 @@
 //! One streaming session: virtual output -> capture -> encode -> USB -> tablet.
 
 use anyhow::{bail, Context, Result};
+use audio::{AudioEncoder, AudioEncoderConfig};
 use capture::evdi_backend::EvdiOutput;
 use capture::session::{BufferMode, Capture, CaptureConfig};
 use encoder::{Encoder, EncoderConfig};
@@ -12,7 +13,24 @@ use std::os::fd::AsFd;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use transport::{adb, stream_header, Sender};
+use transport::{adb, stream_header, AudioParams, Sender};
+
+/// libopus's pre-skip for 48kHz/stereo at this encoder's settings, read off
+/// `opusenc`'s own negotiated OpusHead once and hardcoded here rather than
+/// parsed from caps on every session: verified via
+/// `gst-launch-1.0 -v audiotestsrc ! audioconvert ! audioresample !
+/// audio/x-raw,rate=48000,channels=2 ! opusenc ! fakesink 2>&1 | grep
+/// streamheader`, whose first streamheader buffer decodes as an OpusHead
+/// with pre-skip bytes `38 01` (little-endian) = 312 samples = 6.5ms at
+/// 48kHz. This is a property of libopus's internal lookahead window for a
+/// given sample rate, not of our own bitrate/frame-size/complexity
+/// settings, so it does not vary session to session at a fixed sample rate.
+/// Re-verify with the command above if `AUDIO_SAMPLE_RATE` ever changes.
+const OPUS_PRE_SKIP: u16 = 312;
+const AUDIO_SAMPLE_RATE: u32 = 48_000;
+const AUDIO_CHANNELS: u32 = 2;
+const AUDIO_BITRATE_BPS: u32 = 128_000;
+const AUDIO_FRAME_SIZE_MS: u32 = 20;
 
 use crate::output::VirtualOutput;
 
@@ -107,6 +125,15 @@ pub struct Config {
     pub paint_cursor: bool,
     /// Emit round-trip latency statistics on exit.
     pub stats: bool,
+    /// Capture and stream host system audio to the tablet's speaker.
+    /// Defaults on, unlike `paint_cursor`: `paint_cursor` changes what's
+    /// *captured* (a visibly surprising compositing side effect), while
+    /// audio has no equivalent surprise — the whole premise of this project
+    /// is acting like a real monitor, and a real monitor's speaker isn't
+    /// opt-in. Disabled via `--no-audio`, or automatically (with a warning,
+    /// not a hard failure) if `audio::audio_available()` says the host
+    /// can't serve it.
+    pub audio_enabled: bool,
 }
 
 impl Default for Config {
@@ -147,6 +174,7 @@ impl Default for Config {
             output_name: capture::VIRTUAL_OUTPUT_NAME.to_string(),
             paint_cursor: false,
             stats: false,
+            audio_enabled: true,
         }
     }
 }
@@ -289,9 +317,53 @@ pub fn run(serial: &str, config: &Config, shutdown: &AtomicBool) -> Result<()> {
         })?,
     });
 
-    let mut sender = Sender::connect(port, &stream_header(width, height, config.fps))
+    // Anchors both video's and audio's PTS to one origin: video's is the
+    // synthetic `index * frame_duration_ns` computed against the pacing
+    // loop below, audio's is `session_start.elapsed()` per packet (see
+    // `AudioEncoder::pull_packet`) — same instant, so the two are directly
+    // comparable at the receiver without any host/device clock sync.
+    let session_start = Instant::now();
+
+    // Audio failing to start is never fatal to the session: fall back to
+    // video-only with a warning, same posture as a missing app install or
+    // an unauthorized device elsewhere in this daemon.
+    let audio_encoder = if !config.audio_enabled {
+        tracing::info!("audio disabled (--no-audio)");
+        None
+    } else if !audio::audio_available() {
+        tracing::warn!("no audio available on this host; streaming video only");
+        None
+    } else {
+        match AudioEncoder::new(
+            &AudioEncoderConfig {
+                target_node: None,
+                sample_rate: AUDIO_SAMPLE_RATE,
+                channels: AUDIO_CHANNELS,
+                bitrate_bps: AUDIO_BITRATE_BPS,
+                frame_size_ms: AUDIO_FRAME_SIZE_MS,
+            },
+            session_start,
+        ) {
+            Ok(enc) => Some(enc),
+            Err(e) => {
+                tracing::warn!("audio init failed, streaming video only: {e:#}");
+                None
+            }
+        }
+    };
+
+    let audio_params = audio_encoder.as_ref().map(|_| AudioParams {
+        sample_rate_hz: AUDIO_SAMPLE_RATE,
+        channels: AUDIO_CHANNELS as u8,
+        pre_skip: OPUS_PRE_SKIP,
+    });
+
+    let mut sender = Sender::connect(port, &stream_header(width, height, config.fps, audio_params)?)
         .context("connecting to the app — is it in the foreground on the tablet?")?;
-    tracing::info!("streaming to {serial}");
+    tracing::info!(
+        "streaming to {serial}{}",
+        if audio_encoder.is_some() { " (with audio)" } else { "" }
+    );
 
     let running = Arc::new(AtomicBool::new(true));
     let sent_at: Arc<Mutex<VecDeque<Instant>>> = Arc::new(Mutex::new(VecDeque::new()));
@@ -350,6 +422,35 @@ pub fn run(serial: &str, config: &Config, shutdown: &AtomicBool) -> Result<()> {
         })
     };
 
+    // Mirrors the video drain thread above. `audio_packet_rx` stays `None`
+    // when audio wasn't started, so the pacing loop below just skips it —
+    // no separate "audio enabled" flag to keep in sync with this one.
+    let (audio_packet_rx, audio_drain_thread) = match audio_encoder {
+        Some(audio_encoder) => {
+            let audio_encoder = Arc::new(audio_encoder);
+            let running = Arc::clone(&running);
+            let (audio_tx, audio_rx) = std::sync::mpsc::channel::<(Vec<u8>, u64)>();
+            let handle = std::thread::spawn(move || {
+                while running.load(Ordering::Relaxed) {
+                    match audio_encoder.pull_packet(Duration::from_millis(100)) {
+                        Ok(Some(p)) => {
+                            if audio_tx.send((p.data, p.pts_ns)).is_err() {
+                                break;
+                            }
+                        }
+                        Ok(None) => continue,
+                        Err(e) => {
+                            tracing::error!("audio encoder: {e}");
+                            break;
+                        }
+                    }
+                }
+            });
+            (Some(audio_rx), Some(handle))
+        }
+        None => (None, None),
+    };
+
     let frame_duration_ns = 1_000_000_000u64 / u64::from(config.fps);
     let frame_duration = Duration::from_nanos(frame_duration_ns);
     // Budgeted against the tick, not the old fixed 150ms: on evdi, waiting
@@ -360,15 +461,28 @@ pub fn run(serial: &str, config: &Config, shutdown: &AtomicBool) -> Result<()> {
     let evdi_timeout =
         (frame_duration / 2).clamp(Duration::from_millis(2), Duration::from_millis(50));
     let mut index = 0u64;
-    let mut next_tick = Instant::now();
+    let mut next_tick = session_start;
     let result = (|| -> Result<()> {
         while !shutdown.load(Ordering::Relaxed) {
             frame_source.capture_and_push(&encoder, index * frame_duration_ns, evdi_timeout)?;
             index += 1;
 
+            // Audio first, every tick: packets are tiny (~200-400 bytes at
+            // 20ms Opus frames) next to a video keyframe, so draining them
+            // first bounds how long one can sit queued behind an in-flight
+            // video write on this connection's single writer thread (this
+            // loop). Audio frames never touch `sent_at` — the ack path
+            // matches acks to sends by pure FIFO order, and acking an audio
+            // send would silently desync that pairing.
+            if let Some(audio_packet_rx) = &audio_packet_rx {
+                while let Ok((data, pts)) = audio_packet_rx.try_recv() {
+                    sender.send_audio_frame(&data, pts)?;
+                }
+            }
+
             while let Ok((data, pts, keyframe)) = packet_rx.try_recv() {
                 sent_at.lock().unwrap().push_back(Instant::now());
-                sender.send_frame(&data, pts, keyframe)?;
+                sender.send_video_frame(&data, pts, keyframe)?;
             }
 
             // Constant-rate pacing. On evdi this is what actually produces a
@@ -390,6 +504,9 @@ pub fn run(serial: &str, config: &Config, shutdown: &AtomicBool) -> Result<()> {
 
     running.store(false, Ordering::Relaxed);
     let _ = drain_thread.join();
+    if let Some(h) = audio_drain_thread {
+        let _ = h.join();
+    }
     let _ = ack_thread.join();
 
     if config.stats {

@@ -209,6 +209,45 @@ ls /dev/dri/renderD* >/dev/null 2>&1 \
     && pass "render nodes: $(ls -m /dev/dri/renderD* 2>/dev/null)" \
     || { fail "no /dev/dri/renderD* render node"; block "no DRM render node"; }
 
+# --------------------------------------------------------------------- audio ---
+# Never blocks: missing audio prerequisites fall back to video-only (see
+# audio::audio_available() and its caller in crates/daemon/src/session.rs),
+# the same posture as a missing app install or an unauthorized device.
+head_ "Audio (optional — host system audio to the tablet speaker)"
+
+if command -v gst-inspect-1.0 >/dev/null 2>&1; then
+    if gst-inspect-1.0 pipewiresrc >/dev/null 2>&1; then
+        pass "GStreamer element: pipewiresrc"
+    else
+        fail "GStreamer element missing: pipewiresrc (package: gst-plugin-pipewire)"
+        info "Not part of gst-plugins-good/-base — a separate package even on a"
+        info "machine that already has GStreamer and PipeWire. Audio streaming"
+        info "will be skipped; video is unaffected. --no-audio silences this."
+    fi
+    if gst-inspect-1.0 opusenc >/dev/null 2>&1; then
+        pass "GStreamer element: opusenc"
+    else
+        fail "GStreamer element missing: opusenc (package: gst-plugins-base)"
+    fi
+else
+    warn "gst-inspect-1.0 not found — cannot check audio elements"
+fi
+
+# A live round-trip, not just checking pactl/pw-cli exist -- pactl works via
+# the pipewire-pulse compat shim even in setups where something's wrong with
+# the actual PipeWire server, the same reason compositor detection elsewhere
+# in this script doesn't trust environment markers alone.
+if command -v pactl >/dev/null 2>&1 && pactl info 2>/dev/null | grep -qi "pipewire"; then
+    pass "PipeWire server live (via pactl)"
+    if pactl get-default-sink >/dev/null 2>&1; then
+        pass "default sink: $(pactl get-default-sink 2>/dev/null)"
+    else
+        warn "no default sink — nothing to capture, audio will be silent"
+    fi
+else
+    warn "no live PipeWire server found (pactl info) — audio will be skipped"
+fi
+
 # --------------------------------------------------------------- transport ---
 head_ "Transport (ADB)"
 

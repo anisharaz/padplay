@@ -81,9 +81,9 @@ impl Drop for DeviceSink {
 /// Frame sizes matching what Stage 2 actually produced at 1920x1200@60:
 /// median ~32 KB, occasional ~108 KB keyframe.
 fn synthetic_frame_size(index: usize) -> usize {
-    if index % 600 == 0 {
+    if index.is_multiple_of(600) {
         108_943
-    } else if index % 7 == 0 {
+    } else if index.is_multiple_of(7) {
         45_000
     } else {
         32_357

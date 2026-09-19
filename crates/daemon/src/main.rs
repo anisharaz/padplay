@@ -67,6 +67,7 @@ fn parse_args() -> Args {
                 }
             }
             "--show-cursor" => config.paint_cursor = true,
+            "--no-audio" => config.audio_enabled = false,
             "--once" => once = true,
             "--stats" => config.stats = true,
             "--seconds" => {

@@ -308,6 +308,21 @@ design. A hardcoded modifier is correct on exactly one GPU.
 
 Untested on Intel and NVIDIA. The probing makes it plausible, not proven.
 
+## Audio compatibility
+
+Optional and additive — see [`docs/07-audio-proposal.md`](07-audio-proposal.md)
+for the full design. Requires a live PipeWire server (not just PulseAudio via
+the `pipewire-pulse` compat shim) and `gst-plugin-pipewire`, which is a
+**separate package** from `gst-plugins-good`/`-base` — confirmed absent by
+default even on this project's own reference machine, which already has
+GStreamer, PipeWire, and everything else this project needs. `opusenc`
+(`gst-plugins-base`) is needed too, but that one's usually already present.
+
+None of this blocks video. Missing the plugin, no live PipeWire server, or no
+default sink all degrade the same way: a warning at startup, and the session
+streams video-only. `--no-audio` gets the same result without the warning.
+Run `./scripts/padplay-doctor.sh` to check all of it on your machine.
+
 ## Android compatibility
 
 The most portable part of the project.
@@ -352,16 +367,22 @@ verified, the rest are best-effort and untested:
 sudo pacman -S --needed rust gstreamer gst-plugins-base gst-plugins-good \
                         gst-plugin-va libva libva-utils android-tools \
                         android-udev wayland-utils
+# + optional, for host audio (see "Audio compatibility" above) — verified:
+sudo pacman -S --needed gst-plugin-pipewire
 
 # Fedora — UNVERIFIED
 sudo dnf install rust cargo gstreamer1-plugins-base gstreamer1-plugins-good \
                  gstreamer1-plugins-bad-free libva libva-utils android-tools \
                  wayland-utils
+# + optional, for host audio — UNVERIFIED package name:
+sudo dnf install gstreamer1-plugin-pipewire
 
 # Debian / Ubuntu — UNVERIFIED, check GStreamer is 1.22+
 sudo apt install rustc cargo gstreamer1.0-plugins-base \
                  gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
                  libva2 vainfo adb wayland-utils
+# + optional, for host audio — UNVERIFIED package name:
+sudo apt install gstreamer1.0-pipewire
 ```
 
 `scripts/padplay-doctor.sh` detects the distro and prints the matching line
