@@ -4,6 +4,7 @@ package com.moreland.display
 
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
+import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.content.Context
@@ -19,16 +20,19 @@ import android.widget.LinearLayout
 import android.widget.TextView
 
 /**
- * A collapsible diagnostics panel tucked against the left screen edge.
+ * A near-invisible status dot that opens a centered status dialog on tap —
+ * an "alert dialog", not a panel: nothing about it is present on screen
+ * until asked for.
  *
- * Collapsed, it's a narrow rounded tab with a pulsing dot for at-a-glance
- * connection state — visible without covering the picture. Tapping it (with
- * a quick press-bounce) slides out a card with the full readout: status, a
- * hero FPS number, resolution, frame count, and how long ago the last frame
- * actually landed — so there's always a way to check "is this working"
- * without `adb logcat` on the host. Auto-expanded on launch (nothing has
- * streamed yet, so the guidance matters), then auto-collapses once on the
- * first decoded frame — after that it only moves when tapped.
+ * The dot itself is the only thing shown by default: small, low-alpha,
+ * tinted by connection state, and pulsing only while live — enough to
+ * confirm "is this working" at a glance without competing with the picture.
+ * Tapping it dims the screen and centers a card with the full readout
+ * (status, FPS, resolution, frame count, last-frame age); tapping the
+ * scrim or the close button dismisses it the same way a web alert dialog
+ * would. There's no auto-open, auto-collapse, or persistent panel state to
+ * track — the dot always reflects the latest [update], whether or not the
+ * dialog happens to be open.
  */
 // See the same suppression on DisplayActivity: no localization plan for a
 // single-purpose diagnostic overlay.
@@ -38,48 +42,58 @@ class StatsWidget(private val context: Context, root: FrameLayout) {
     private val density = context.resources.displayMetrics.density
     private fun dp(v: Int) = (v * density).toInt()
 
-    private fun dot(sizeDp: Int) = View(context).apply {
+    // --- the indicator: a dot and nothing else -----------------------------
+
+    private val indicatorDot = View(context).apply {
         background = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(COLOR_WAITING)
         }
-        layoutParams = FrameLayout.LayoutParams(dp(sizeDp), dp(sizeDp))
+        alpha = DOT_ALPHA_IDLE
+        layoutParams = FrameLayout.LayoutParams(dp(9), dp(9)).apply { gravity = Gravity.CENTER }
     }
 
-    private val tabDot = dot(10)
-    private val statusDot = dot(9)
-
-    private val tab = FrameLayout(context).apply {
-        background = roundedDrawable(BG, rightOnly = true, radius = dp(16).toFloat()).apply {
-            alpha = TAB_ALPHA_IDLE
-        }
-        addView(tabDot, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.CENTER))
+    /** Larger than the visible dot so the tap target isn't a 9dp pinprick;
+     * stays fully transparent itself — only [indicatorDot] is ever painted. */
+    private val indicatorTouchTarget = FrameLayout(context).apply {
+        addView(indicatorDot)
     }
 
-    private val versionText = TextView(context).apply {
-        setTextColor(Color.parseColor("#5C6672"))
-        textSize = 10f
-        typeface = Typeface.MONOSPACE
+    // --- the dialog: built once, shown/hidden as a whole --------------------
+
+    private val dialogTitle = TextView(context).apply {
+        text = "Moreland"
+        setTextColor(COLOR_ACCENT)
+        textSize = 13f
+        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+        letterSpacing = 0.12f
+        layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
     }
 
-    private val header = LinearLayout(context).apply {
+    private val closeButton = TextView(context).apply {
+        text = "✕"
+        setTextColor(Color.parseColor("#8A94A0"))
+        textSize = 15f
+        gravity = Gravity.CENTER
+        setPadding(dp(10), dp(10), dp(10), dp(10))
+    }
+
+    private val dialogHeader = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        addView(
-            TextView(context).apply {
-                text = "MORELAND"
-                setTextColor(COLOR_ACCENT)
-                textSize = 12f
-                typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-                letterSpacing = 0.12f
-                layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
-            },
-        )
-        addView(versionText)
+        addView(dialogTitle)
+        addView(closeButton)
     }
 
     private val divider = View(context).apply {
         setBackgroundColor(Color.parseColor("#332B3540"))
+    }
+
+    private val dialogDot = View(context).apply {
+        background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(COLOR_WAITING)
+        }
     }
 
     private val statusLabel = TextView(context).apply {
@@ -91,7 +105,7 @@ class StatsWidget(private val context: Context, root: FrameLayout) {
     private val statusRow = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        addView(statusDot, LinearLayout.LayoutParams(dp(9), dp(9)).apply { rightMargin = dp(8) })
+        addView(dialogDot, LinearLayout.LayoutParams(dp(9), dp(9)).apply { rightMargin = dp(8) })
         addView(statusLabel)
     }
 
@@ -147,116 +161,119 @@ class StatsWidget(private val context: Context, root: FrameLayout) {
         visibility = View.GONE
     }
 
+    private val versionText = TextView(context).apply {
+        setTextColor(Color.parseColor("#4A525C"))
+        textSize = 10f
+        typeface = Typeface.MONOSPACE
+        gravity = Gravity.END
+    }
+
     private fun space(heightDp: Int) = View(context).apply {
         layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(heightDp))
     }
 
-    private val panel = LinearLayout(context).apply {
+    private val dialogCard = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
-        background = roundedDrawable(BG, rightOnly = false, radius = dp(16).toFloat()).apply {
-            alpha = PANEL_ALPHA
-            setStroke(1, Color.parseColor("#2A00E5A0"))
+        background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(18).toFloat()
+            setColor(CARD_BG)
+            setStroke(dp(1).coerceAtLeast(1), Color.parseColor("#332F3B45"))
         }
-        setPadding(dp(16), dp(14), dp(16), dp(14))
-        // header/secondaryRow each have a weight=1 child meant to push
-        // content to the far edge -- that only works if *this* row has a
-        // definite width to distribute. A plain addView(header) would leave
-        // it wrap_content (LinearLayout's default for a VERTICAL parent),
-        // where a weighted child has no extra space to claim.
-        addView(header, LinearLayout.LayoutParams(MATCH, WRAP))
-        addView(divider, LinearLayout.LayoutParams(MATCH, dp(1)).apply { topMargin = dp(8); bottomMargin = dp(10) })
+        elevation = dp(12).toFloat()
+        setPadding(dp(20), dp(18), dp(20), dp(18))
+        addView(dialogHeader, LinearLayout.LayoutParams(MATCH, WRAP))
+        addView(divider, LinearLayout.LayoutParams(MATCH, dp(1)).apply { topMargin = dp(10); bottomMargin = dp(12) })
         addView(statusRow)
         addView(space(4))
         addView(streamInfoText)
-        addView(space(8))
+        addView(space(10))
         addView(heroRow)
-        addView(space(8))
+        addView(space(10))
         addView(secondaryRow, LinearLayout.LayoutParams(MATCH, WRAP))
         addView(errorText)
+        addView(space(10))
+        addView(versionText, LinearLayout.LayoutParams(MATCH, WRAP))
+        layoutParams = FrameLayout.LayoutParams(dp(300), WRAP).apply { gravity = Gravity.CENTER }
+    }
+
+    /** Full-screen scrim behind the card; tapping it dismisses, same as
+     * tapping outside a web alert dialog. */
+    private val scrim = FrameLayout(context).apply {
+        setBackgroundColor(SCRIM_COLOR)
         visibility = View.GONE
+        alpha = 0f
+        addView(dialogCard)
+        setOnClickListener { hide() }
     }
 
-    private val container = LinearLayout(context).apply {
-        orientation = LinearLayout.HORIZONTAL
-        addView(tab, LinearLayout.LayoutParams(dp(30), dp(76)))
-        addView(panel, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT))
-    }
-
-    private var expanded = false
-    private var hasAutoCollapsed = false
+    private var visible = false
     private var pulsing = false
-    private val tabPulse = pulseAnimator(tabDot)
-    private val statusPulse = pulseAnimator(statusDot)
+    private val indicatorPulse = pulseAnimator(indicatorDot)
+    private val dialogPulse = pulseAnimator(dialogDot)
 
     init {
         versionText.text = versionName(context)
         root.addView(
-            container,
-            FrameLayout.LayoutParams(WRAP, WRAP).apply {
-                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            indicatorTouchTarget,
+            FrameLayout.LayoutParams(dp(44), dp(44)).apply {
+                gravity = Gravity.TOP or Gravity.END
+                topMargin = dp(14)
+                rightMargin = dp(14)
             },
         )
-        tab.setOnClickListener {
-            bounce(tab)
-            setExpanded(!expanded)
+        root.addView(scrim, FrameLayout.LayoutParams(MATCH, MATCH))
+
+        indicatorTouchTarget.setOnClickListener {
+            bounce(indicatorDot)
+            show()
         }
-        setExpanded(true, animate = false)
+        // Consume clicks on the card itself so they don't fall through to
+        // the scrim's dismiss handler underneath it.
+        dialogCard.setOnClickListener { }
+        closeButton.setOnClickListener { hide() }
     }
 
-    fun setExpanded(newExpanded: Boolean, animate: Boolean = true) {
-        if (expanded == newExpanded) return
-        expanded = newExpanded
-        val params = panel.layoutParams as LinearLayout.LayoutParams
-        val tabTargetAlpha = if (newExpanded) TAB_ALPHA_ACTIVE else TAB_ALPHA_IDLE
-
-        if (!animate) {
-            panel.visibility = if (newExpanded) View.VISIBLE else View.GONE
-            params.width = if (newExpanded) LinearLayout.LayoutParams.WRAP_CONTENT else 0
-            panel.layoutParams = params
-            tab.background.alpha = tabTargetAlpha
-            return
-        }
-
-        panel.visibility = View.VISIBLE
-        panel.alpha = if (newExpanded) 0f else 1f
-        panel.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
-        val targetWidth = panel.measuredWidth
-        val startWidth = if (newExpanded) 0 else panel.width
-        val endWidth = if (newExpanded) targetWidth else 0
-        val tabStartAlpha = tab.background.alpha
-
-        ValueAnimator.ofInt(startWidth, endWidth).apply {
-            duration = 260
-            // A little overshoot opening (feels like it "pops" into place), a
-            // plain decelerate closing (overshooting a collapse just looks
-            // like a stutter, nothing there to bounce against).
-            interpolator = if (newExpanded) OvershootInterpolator(1.6f) else DecelerateInterpolator()
-            addUpdateListener { animator ->
-                val value = animator.animatedValue as Int
-                // OvershootInterpolator can push the animated int slightly
-                // past the target on the way in; clamp so the layout width
-                // never goes negative.
-                params.width = value.coerceAtLeast(0)
-                panel.layoutParams = params
-                val fraction = animator.animatedFraction.coerceIn(0f, 1f)
-                tab.background.alpha =
-                    (tabStartAlpha + (tabTargetAlpha - tabStartAlpha) * fraction).toInt()
-                panel.alpha = if (newExpanded) fraction else 1f - fraction
-            }
-            addListener(
-                object : AnimatorListenerAdapter() {
-                    override fun onAnimationEnd(animation: Animator) {
-                        if (!newExpanded) {
-                            panel.visibility = View.GONE
-                        } else {
-                            params.width = LinearLayout.LayoutParams.WRAP_CONTENT
-                            panel.layoutParams = params
-                            panel.alpha = 1f
-                        }
-                        tab.background.alpha = tabTargetAlpha
-                    }
+    private fun show() {
+        if (visible) return
+        visible = true
+        scrim.visibility = View.VISIBLE
+        dialogCard.scaleX = 0.92f
+        dialogCard.scaleY = 0.92f
+        dialogCard.alpha = 0f
+        AnimatorSet().apply {
+            playTogether(
+                ObjectAnimator.ofFloat(scrim, "alpha", 0f, 1f).setDuration(160),
+                ObjectAnimator.ofFloat(dialogCard, "scaleX", 0.92f, 1f).apply {
+                    duration = 200
+                    interpolator = OvershootInterpolator(1.8f)
                 },
+                ObjectAnimator.ofFloat(dialogCard, "scaleY", 0.92f, 1f).apply {
+                    duration = 200
+                    interpolator = OvershootInterpolator(1.8f)
+                },
+                ObjectAnimator.ofFloat(dialogCard, "alpha", 0f, 1f).setDuration(160),
             )
+            start()
+        }
+    }
+
+    private fun hide() {
+        if (!visible) return
+        visible = false
+        AnimatorSet().apply {
+            playTogether(
+                ObjectAnimator.ofFloat(scrim, "alpha", 1f, 0f).setDuration(140),
+                ObjectAnimator.ofFloat(dialogCard, "scaleX", 1f, 0.96f).setDuration(140),
+                ObjectAnimator.ofFloat(dialogCard, "scaleY", 1f, 0.96f).setDuration(140),
+                ObjectAnimator.ofFloat(dialogCard, "alpha", 1f, 0f).setDuration(140),
+            )
+            interpolator = DecelerateInterpolator()
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    scrim.visibility = View.GONE
+                }
+            })
             start()
         }
     }
@@ -277,8 +294,8 @@ class StatsWidget(private val context: Context, root: FrameLayout) {
             staleMs > 3000 -> COLOR_STALLED
             else -> COLOR_LIVE
         }
-        tabDot.background.setTint(color)
-        statusDot.background.setTint(color)
+        indicatorDot.background.setTint(color)
+        dialogDot.background.setTint(color)
         setPulsing(live)
 
         statusLabel.text = phase.label
@@ -292,24 +309,19 @@ class StatsWidget(private val context: Context, root: FrameLayout) {
         }
         errorText.visibility = if (lastError != null) View.VISIBLE else View.GONE
         errorText.text = lastError
-
-        if (frames > 0 && !hasAutoCollapsed) {
-            hasAutoCollapsed = true
-            setExpanded(false)
-        }
     }
 
     private fun setPulsing(shouldPulse: Boolean) {
         if (shouldPulse == pulsing) return
         pulsing = shouldPulse
-        for ((animator, view) in listOf(tabPulse to tabDot, statusPulse to statusDot)) {
+        for ((animator, view) in listOf(indicatorPulse to indicatorDot, dialogPulse to dialogDot)) {
             if (shouldPulse) {
                 animator.start()
             } else {
                 animator.cancel()
                 view.scaleX = 1f
                 view.scaleY = 1f
-                view.alpha = 1f
+                view.alpha = if (view === indicatorDot) DOT_ALPHA_IDLE else 1f
             }
         }
     }
@@ -323,24 +335,25 @@ class StatsWidget(private val context: Context, root: FrameLayout) {
             duration = 1100
             repeatMode = ValueAnimator.REVERSE
             repeatCount = ValueAnimator.INFINITE
+            val baseAlpha = if (view === indicatorDot) DOT_ALPHA_IDLE else 1f
             addUpdateListener {
                 val t = it.animatedFraction
                 val scale = 1f + 0.35f * t
                 view.scaleX = scale
                 view.scaleY = scale
-                view.alpha = 1f - 0.5f * t
+                view.alpha = baseAlpha - (baseAlpha * 0.5f) * t
             }
         }
 
     /** Quick press feedback: scale down and spring back. */
     private fun bounce(view: View) {
-        ObjectAnimator.ofFloat(view, "scaleX", 1f, 0.88f, 1f).apply {
-            duration = 220
+        ObjectAnimator.ofFloat(view, "scaleX", 1f, 0.8f, 1f).apply {
+            duration = 200
             interpolator = OvershootInterpolator(3f)
             start()
         }
-        ObjectAnimator.ofFloat(view, "scaleY", 1f, 0.88f, 1f).apply {
-            duration = 220
+        ObjectAnimator.ofFloat(view, "scaleY", 1f, 0.8f, 1f).apply {
+            duration = 200
             interpolator = OvershootInterpolator(3f)
             start()
         }
@@ -354,25 +367,10 @@ class StatsWidget(private val context: Context, root: FrameLayout) {
         "v${info.versionName}"
     }.getOrDefault("")
 
-    private fun roundedDrawable(color: Int, rightOnly: Boolean, radius: Float) =
-        GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            setColor(color)
-            cornerRadii = if (rightOnly) {
-                floatArrayOf(0f, 0f, radius, radius, radius, radius, 0f, 0f)
-            } else {
-                floatArrayOf(radius, radius, radius, radius, radius, radius, radius, radius)
-            }
-        }
-
     private companion object {
-        // Alpha kept out of the color itself (fully opaque `BG`) and applied
-        // separately via Drawable.alpha, so the tab's idle/active alpha can
-        // be animated without recreating the drawable.
-        val BG = Color.parseColor("#161B22")
-        const val TAB_ALPHA_IDLE = 45 // ~18% — present, but stays out of the way
-        const val TAB_ALPHA_ACTIVE = 240 // ~94% — clearly a control once touched
-        const val PANEL_ALPHA = 240
+        val CARD_BG = Color.parseColor("#161B22")
+        val SCRIM_COLOR = Color.parseColor("#B3000A0D")
+        const val DOT_ALPHA_IDLE = 0.55f
         val COLOR_ACCENT = Color.parseColor("#00E5A0")
         val COLOR_LIVE = Color.parseColor("#00E5A0")
         val COLOR_STALLED = Color.parseColor("#FFC107")
