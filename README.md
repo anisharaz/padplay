@@ -165,9 +165,9 @@ moreland --seconds 15     stop after 15 s and print latency statistics
 --width <PX> --height <PX> pin an explicit resolution (both required)
 --fps <N>                  virtual output refresh rate   [default: 90]
 --bitrate <KBPS>           H.264 target bitrate          [default: 20000]
---position <X>             x offset of the virtual output [default: 1920]
+--position <X>             x offset of the virtual output [default: -1920]
 --position-y <Y>           y offset of the virtual output [default: 0]
-                           default sits to the right of a 1920x1080 primary
+                           default sits to the left of a 1920x1080 primary
                            at 0x0, this fork's own reference layout;
                            override either axis to fit yours
 --output-name <NAME>       name of the virtual output    [default: moreland]
