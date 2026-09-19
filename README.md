@@ -186,6 +186,22 @@ asked to do more than the screen can show:
 2.5× the pixels of 1080p and will push the encoder hard for detail you cannot
 resolve on an 11" screen - measure before keeping it.
 
+## Audio
+
+The tablet shows up as its own selectable output device - **padplay** - in
+your system's sound settings, the same way a USB speaker or an HDMI
+monitor's audio would. It is not a live mirror of your current default
+output: audio only reaches the tablet if you route something to it (per-app,
+or by setting it as your default sink), so nothing plays on both the tablet
+and your laptop speakers at once unless you choose that.
+
+On by default (Opus, `--no-audio` to disable). If PipeWire, `opusenc`, or
+`gst-plugin-pipewire` aren't available, the daemon falls back to video-only
+with a warning rather than failing the session - see
+[Compatibility](#compatibility). Design and implementation notes, including
+a device-specific decoder issue that came up in testing and how it was
+fixed, are in [`docs/07-audio-proposal.md`](docs/07-audio-proposal.md).
+
 ## Performance
 
 Measured at 1920×1200@60 on a Ryzen 7 5800HS with AMD Vega, streaming to a
@@ -323,10 +339,10 @@ so it is harmless while the tablet is unplugged.
 - **No touch or pen input.** The tablet is a display only. `zwlr_virtual_pointer_v1`
   would add absolute-pointer input without root; true multi-touch needs `uinput`.
 - **The app must stay foregrounded.** Switching apps on the tablet stops the stream.
-- **Audio latency is unmeasured.** Host system audio streams to the tablet's
-  speaker by default (Opus over the same connection, `--no-audio` to disable) —
-  see [`docs/07-audio-proposal.md`](docs/07-audio-proposal.md) for the design.
-  It hasn't had the same latency profiling pass the video path has.
+- **Audio latency is unmeasured.** Verified working end to end (Opus,
+  decoded and played via the tablet's own selectable sound-settings entry —
+  see [Audio](#audio) below), but hasn't had the same latency profiling
+  pass the video path has.
 - **Idle output drops to ~1 fps on Hyprland/labwc.** Correct, not a bug: those
   compositors do not render a static headless output, so a motionless screen
   costs almost nothing, and it jumps straight back to the configured rate on

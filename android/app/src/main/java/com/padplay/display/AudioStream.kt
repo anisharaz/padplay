@@ -44,12 +44,26 @@ interface AudioSink {
  * Structured as closely as reasonable to [VideoStream]: reuses its [Phase]
  * state machine (the wording is already codec-agnostic), is created once and
  * outlives individual host connections, and is started/stopped by
- * `DisplayActivity`'s accept switch in lockstep with the video stream. The
- * same "never block the `MediaCodec` async callback" discipline applies —
- * [onOutputBufferAvailable] copies PCM out and releases immediately, then a
- * dedicated writer thread owns the blocking [AudioTrack.write] call, mirroring
- * [VideoStream]'s `ackThread` pattern for "the callback must return fast, the
- * slow blocking operation happens elsewhere."
+ * `DisplayActivity`'s accept switch in lockstep with the video stream.
+ *
+ * Drives [MediaCodec] with its **synchronous** `dequeue`/`queue` API rather
+ * than the async callback API — not the more idiomatic modern choice, but a
+ * deliberate one: on the reference tablet, the async path (`setCallback`)
+ * left this device's vendor Codec2 stack (`c2.android.opus.decoder` via
+ * MediaTek's Codec2 store) logging `Codec2-ComponentInterface: We have a
+ * failed config` at `start()` and never processing a single input buffer
+ * for the entire session (`Qin:0` in the codec's own end-of-session stats),
+ * even with byte-verified-correct CSD. The sync API worked where async did
+ * not — see `docs/07-audio-proposal.md`'s "Status" section for the full
+ * investigation. Two threads drive it, mirroring the same "never block the
+ * thread video also depends on" discipline the async version already had:
+ * [onAudioFrame] (called from `VideoStream`'s single shared demux thread)
+ * only ever does a zero-timeout `dequeueInputBuffer` and drops the frame if
+ * none is free, never blocking; a dedicated [outputDrainThread] owns the
+ * blocking `dequeueOutputBuffer` loop, and a further dedicated writer thread
+ * owns the blocking [AudioTrack.write] call, mirroring [VideoStream]'s
+ * `ackThread` pattern for "the demux thread must return fast, the slow
+ * blocking operation happens elsewhere."
  *
  * Unlike [VideoStream], this class does not own a socket or an accept loop —
  * [VideoStream]'s read loop is the only demuxer, and drives this class
@@ -60,13 +74,6 @@ class AudioStream : AudioSink {
 
     private companion object {
         const val TAG = "PadPlay"
-
-        // The demux thread that calls onAudioFrame() is shared with video
-        // frame reads (VideoStream's single read loop) — unlike video's own
-        // 2000ms input-starvation timeout, audio can't afford to camp on
-        // that thread waiting for a decoder input buffer, or video frames
-        // queue up behind it. Short timeout, drop and move on.
-        const val AUDIO_INPUT_TIMEOUT_MS = 50L
 
         // getMinBufferSize() is the minimum that avoids immediate underrun
         // under ideal scheduling; real device scheduling jitter is not
@@ -82,15 +89,21 @@ class AudioStream : AudioSink {
         // Not wired from the wire header — see docs/07-audio-proposal.md's
         // "Opus CSD" section for why this one stays a derived constant.
         const val SEEK_PREROLL_NS = 80_000_000L
+
+        // How long the output-drain thread blocks per dequeueOutputBuffer
+        // call before checking `running` again -- this thread is dedicated
+        // and blocking it is fine, unlike the input side on the shared
+        // demux thread.
+        const val OUTPUT_DEQUEUE_TIMEOUT_US = 20_000L
     }
 
     @Volatile private var running = false
     @Volatile private var codec: MediaCodec? = null
     @Volatile private var track: AudioTrack? = null
     private var writerThread: Thread? = null
+    private var outputDrainThread: Thread? = null
     private var channels = 1
 
-    private val freeInputs = LinkedBlockingQueue<Int>()
     private val pendingPcm = LinkedBlockingQueue<ByteArray>()
 
     @Volatile var samplesPlayed: Long = 0; private set
@@ -137,8 +150,19 @@ class AudioStream : AudioSink {
 
     override fun onAudioFrame(payload: ByteArray, length: Int, ptsNs: Long) {
         val codec = this.codec ?: return
-        val index = freeInputs.poll(AUDIO_INPUT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-        if (index == null) {
+        // Zero-timeout, non-blocking: this runs on VideoStream's single
+        // shared demux thread, which also has to keep reading video frames
+        // off the same socket. Any wait here, however short, means a
+        // stalled or slow-draining decoder stalls video reads for that
+        // long too -- at Opus's ~20ms packet cadence a decoder that's
+        // fallen behind turns into the demux thread spending nearly all its
+        // time blocked on audio, backing video up in the socket's receive
+        // buffer for seconds (measured: median round trip went from ~30ms
+        // to ~9000ms before this was a zero-timeout call). A dropped audio
+        // frame is inaudible; a demux thread stuck for hundreds of ms is
+        // not.
+        val index = runCatching { codec.dequeueInputBuffer(0) }.getOrDefault(-1)
+        if (index < 0) {
             Log.w(TAG, "audio decoder starved of input buffers; dropping frame")
             return
         }
@@ -146,7 +170,8 @@ class AudioStream : AudioSink {
         inputBuffer.clear()
         inputBuffer.put(payload, 0, length)
         // MediaCodec timestamps are microseconds; the wire uses nanoseconds.
-        codec.queueInputBuffer(index, 0, length, ptsNs / 1000, 0)
+        runCatching { codec.queueInputBuffer(index, 0, length, ptsNs / 1000, 0) }
+            .onFailure { lastError = "audio queueInputBuffer: ${it.message}" }
     }
 
     override fun onSessionEnded() {
@@ -163,39 +188,10 @@ class AudioStream : AudioSink {
         format.setByteBuffer("csd-1", ByteBuffer.wrap(leInt64(codecDelayNs(header.audioPreSkip, sampleRate))))
         format.setByteBuffer("csd-2", ByteBuffer.wrap(leInt64(SEEK_PREROLL_NS)))
 
+        // Synchronous API deliberately — see the class doc comment for why
+        // (async left this device's decoder permanently stuck at 0
+        // processed packets).
         val codec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_AUDIO_OPUS)
-        codec.setCallback(object : MediaCodec.Callback() {
-            override fun onInputBufferAvailable(codec: MediaCodec, index: Int) {
-                freeInputs.offer(index)
-            }
-
-            override fun onOutputBufferAvailable(
-                codec: MediaCodec,
-                index: Int,
-                info: MediaCodec.BufferInfo,
-            ) {
-                // Copy out and release immediately — there's no "render"
-                // concept for audio, so this is always false, and the copy
-                // must happen before release() invalidates the buffer.
-                val buffer = codec.getOutputBuffer(index)
-                if (buffer != null && info.size > 0) {
-                    val pcm = ByteArray(info.size)
-                    buffer.get(pcm)
-                    pendingPcm.offer(pcm)
-                }
-                runCatching { codec.releaseOutputBuffer(index, false) }
-            }
-
-            override fun onError(codec: MediaCodec, e: MediaCodec.CodecException) {
-                lastError = "audio decoder: ${e.message}"
-                Log.e(TAG, "audio codec error: ${e.message}", e)
-            }
-
-            override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
-                Log.i(TAG, "audio output format: $format")
-            }
-        })
-
         codec.configure(format, null, null, 0)
         codec.start()
         this.codec = codec
@@ -205,8 +201,8 @@ class AudioStream : AudioSink {
         track.play()
         this.track = track
 
-        freeInputs.clear()
         pendingPcm.clear()
+        startOutputDrainThread(codec)
         startWriterThread(track)
     }
 
@@ -240,9 +236,49 @@ class AudioStream : AudioSink {
     }
 
     /**
-     * Owns the blocking [AudioTrack.write] call so the decoder callback
+     * Owns the blocking `dequeueOutputBuffer` loop — the sync-API
+     * equivalent of what `onOutputBufferAvailable` did in the async
+     * version. Dedicated to this one job, so blocking here (unlike on the
+     * shared demux thread `onAudioFrame` runs on) is fine.
+     */
+    private fun startOutputDrainThread(codec: MediaCodec) {
+        outputDrainThread = Thread({
+            val info = MediaCodec.BufferInfo()
+            try {
+                while (running && !Thread.currentThread().isInterrupted) {
+                    val index = codec.dequeueOutputBuffer(info, OUTPUT_DEQUEUE_TIMEOUT_US)
+                    when {
+                        index >= 0 -> {
+                            // Copy out and release immediately — there's no
+                            // "render" concept for audio, so this is always
+                            // false, and the copy must happen before
+                            // release() invalidates the buffer.
+                            val buffer = codec.getOutputBuffer(index)
+                            if (buffer != null && info.size > 0) {
+                                val pcm = ByteArray(info.size)
+                                buffer.get(pcm)
+                                pendingPcm.offer(pcm)
+                            }
+                            codec.releaseOutputBuffer(index, false)
+                        }
+                        index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED ->
+                            Log.i(TAG, "audio output format: ${codec.outputFormat}")
+                        // INFO_TRY_AGAIN_LATER and the deprecated
+                        // INFO_OUTPUT_BUFFERS_CHANGED both need no action --
+                        // just loop and check `running` again.
+                    }
+                }
+            } catch (e: Exception) {
+                lastError = "audio decoder: ${e.message}"
+                Log.w(TAG, "audio output drain stopped: ${e.message}")
+            }
+        }, "padplay-audio-drain").apply { start() }
+    }
+
+    /**
+     * Owns the blocking [AudioTrack.write] call so the output-drain thread
      * above never does — the same reason [VideoStream] has a dedicated
-     * `ackThread` rather than writing acks from inside its callback.
+     * `ackThread` rather than writing acks from inside its read loop.
      */
     private fun startWriterThread(track: AudioTrack) {
         writerThread = Thread({
@@ -268,13 +304,14 @@ class AudioStream : AudioSink {
     private fun teardown() {
         writerThread?.interrupt()
         writerThread = null
+        outputDrainThread?.interrupt()
+        outputDrainThread = null
         runCatching { codec?.stop() }
         runCatching { codec?.release() }
         codec = null
         runCatching { track?.stop() }
         runCatching { track?.release() }
         track = null
-        freeInputs.clear()
         pendingPcm.clear()
     }
 

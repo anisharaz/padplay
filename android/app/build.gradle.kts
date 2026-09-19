@@ -13,8 +13,8 @@ android {
         // target tablet is API 34.
         minSdk = 29
         targetSdk = 34
-        versionCode = 9
-        versionName = "0.5.0"
+        versionCode = 10
+        versionName = "0.5.1"
     }
 
     buildTypes {

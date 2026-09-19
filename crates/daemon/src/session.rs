@@ -27,6 +27,10 @@ use transport::{adb, stream_header, AudioParams, Sender};
 /// settings, so it does not vary session to session at a fixed sample rate.
 /// Re-verify with the command above if `AUDIO_SAMPLE_RATE` ever changes.
 const OPUS_PRE_SKIP: u16 = 312;
+/// PipeWire node name for the virtual sink the tablet captures from — see
+/// where it's created in `run()` for why this is a dedicated sink rather
+/// than a live follow of the system's default output.
+const AUDIO_SINK_NAME: &str = "padplay";
 const AUDIO_SAMPLE_RATE: u32 = 48_000;
 const AUDIO_CHANNELS: u32 = 2;
 const AUDIO_BITRATE_BPS: u32 = 128_000;
@@ -327,27 +331,52 @@ pub fn run(serial: &str, config: &Config, shutdown: &AtomicBool) -> Result<()> {
     // Audio failing to start is never fatal to the session: fall back to
     // video-only with a warning, same posture as a missing app install or
     // an unauthorized device elsewhere in this daemon.
-    let audio_encoder = if !config.audio_enabled {
+    //
+    // A dedicated virtual sink, not a live follow of whatever the system's
+    // current default sink is: capturing the default sink's monitor plays
+    // audio on the host's own speakers *and* the tablet at once, which is
+    // not what "the tablet is a second speaker" means to anyone choosing
+    // it as an output device. The tablet instead shows up in the system's
+    // sound settings as its own selectable sink ("padplay") — route audio
+    // to it the way you would a USB speaker, and only that audio reaches
+    // the tablet. `audio_sink` has to outlive the pacing loop below (its
+    // `Drop` removes the PipeWire module), so it stays bound in this outer
+    // scope even though nothing here reads it again directly.
+    let (audio_encoder, _audio_sink) = if !config.audio_enabled {
         tracing::info!("audio disabled (--no-audio)");
-        None
+        (None, None)
     } else if !audio::audio_available() {
         tracing::warn!("no audio available on this host; streaming video only");
-        None
+        (None, None)
     } else {
-        match AudioEncoder::new(
-            &AudioEncoderConfig {
-                target_node: None,
-                sample_rate: AUDIO_SAMPLE_RATE,
-                channels: AUDIO_CHANNELS,
-                bitrate_bps: AUDIO_BITRATE_BPS,
-                frame_size_ms: AUDIO_FRAME_SIZE_MS,
-            },
-            session_start,
-        ) {
-            Ok(enc) => Some(enc),
+        match audio::VirtualSink::create(AUDIO_SINK_NAME) {
             Err(e) => {
-                tracing::warn!("audio init failed, streaming video only: {e:#}");
-                None
+                tracing::warn!("audio sink init failed, streaming video only: {e:#}");
+                (None, None)
+            }
+            Ok(sink) => {
+                match AudioEncoder::new(
+                    &AudioEncoderConfig {
+                        target_node: Some(sink.monitor_name()),
+                        sample_rate: AUDIO_SAMPLE_RATE,
+                        channels: AUDIO_CHANNELS,
+                        bitrate_bps: AUDIO_BITRATE_BPS,
+                        frame_size_ms: AUDIO_FRAME_SIZE_MS,
+                    },
+                    session_start,
+                ) {
+                    Ok(enc) => {
+                        tracing::info!(
+                            "audio sink \"{AUDIO_SINK_NAME}\" ready — select it in your \
+                             system's sound settings to send audio to the tablet"
+                        );
+                        (Some(enc), Some(sink))
+                    }
+                    Err(e) => {
+                        tracing::warn!("audio init failed, streaming video only: {e:#}");
+                        (None, None)
+                    }
+                }
             }
         }
     };

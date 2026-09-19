@@ -269,6 +269,16 @@ pub fn audio_available() -> bool;
 
 ### Capture target: follow the default sink live, don't redirect
 
+**Superseded — see the "Status" section at the end of this doc.** In
+practice this meant audio always played on the host's speakers *and* the
+tablet at once, which isn't what most people mean by "use the tablet as a
+speaker." Shipped instead: a dedicated `VirtualSink` the tablet captures
+from, so it shows up as its own selectable output device. The reasoning
+below for why a live default-sink follow was chosen over an always-on
+redirect is kept for the record, but the actual implementation gives the
+user that choice via a normal sound-settings device pick rather than
+picking one of the two for them.
+
 `pipewiresrc` with `stream.capture.sink = true` and no explicit target
 follows whatever the *current* default output sink is, live, including if
 the user changes it mid-session (headphones plugged in, etc.) — this is
@@ -382,3 +392,79 @@ the jitter-buffer/sync design above). `audio-type=generic`, not `voip`
 5. Android `AudioStream` + `AudioSink` demux wiring, built and tested
    against a daemon already emitting real audio frames from step 4.
 6. `padplay-doctor.sh` / `COMPATIBILITY.md` updates.
+
+## Status: implemented, one open device-specific bug found in real testing
+
+All six steps above are done. First real on-device test (Xiaomi Pad 6)
+surfaced two issues, one fixed, one still open:
+
+**Fixed — critical, was blocking video too.** `AudioStream.onAudioFrame`
+originally called `freeInputs.poll(50, TimeUnit.MILLISECONDS)` — a blocking
+wait on `VideoStream`'s single shared demux thread. At Opus's ~20ms packet
+cadence, a decoder that's fallen behind (see below) turns that into the
+demux thread spending nearly all its time blocked waiting on audio, which
+backs video up in the socket's receive buffer for seconds: measured median
+round trip went from the normal ~30ms to **~9000ms** with audio enabled.
+Changed to a non-blocking `freeInputs.poll()` — a decoder that can't keep
+up now just drops the frame instantly instead of stalling the thread video
+also depends on. Confirmed by measurement: median round trip holds at
+~30-33ms with audio active after the fix, matching the video-only baseline.
+**The general lesson**: nothing that shares a thread with video's demux
+loop may ever block on audio-side backpressure, however briefly — this
+should be treated as an invariant for any future change to `onAudioFrame`
+or a differently-shaped audio-side consumer.
+
+**Fixed — audio didn't decode on this device (async `MediaCodec` API).**
+Even after the fix above, the Opus decoder never actually processed any
+input: `MediaCodec`/`CCodec` logged `Codec2-ComponentInterface: We have a
+failed config` immediately after `start()`, and the codec's own
+end-of-session stats reported `Qin:0,DQin:0/0,Render:0,Drop:0,DQout:0/0` —
+zero packets ever queued to it, for the whole session. Ruled out first: the
+CSD's own correctness (`csd-0`'s OpusHead bytes were decoded by hand from
+`adb logcat`'s dump of the codec's `ClientFormat` and matched, byte for
+byte, an independently-verified reference OpusHead from a real
+`gst-launch-1.0`/libopus encode); whether `csd-1`/`csd-2` (codec delay /
+seek pre-roll) were the trigger (removed both as a live experiment — `Qin:0`
+and the same "failed config" persisted identically with just `csd-0`
+present).
+
+The actual fix: switching `AudioStream` from `MediaCodec`'s async callback
+API (`setCallback`) to the **synchronous** `dequeueInputBuffer`/
+`dequeueOutputBuffer`/`queueInputBuffer`/`releaseOutputBuffer` API. Same
+decoder (`c2.android.opus.decoder`, AOSP's own software Opus component, via
+this device's MediaTek Codec2 vendor store), same CSD, same everything else
+— only the driving API changed, and it went from `Qin:0` (nothing ever
+processed) to real, sustained throughput (`Qin:251,DQin:251/251,
+DQout:251/371` over one measured window). This points at a compatibility
+gap specific to how this vendor's Codec2 front-end handles the async
+callback registration/config handshake for this software component, not a
+defect in the bytes this app sent it or in the codec itself. Two threads
+now drive the sync API: [onAudioFrame] still only ever does a **zero-
+timeout** `dequeueInputBuffer` on the shared demux thread (dropping the
+frame if none is free — the same "never block that thread" invariant from
+the fix above, just applied to the sync API's equivalent blocking point),
+and a dedicated `outputDrainThread` owns the blocking `dequeueOutputBuffer`
+loop.
+
+**Also added — a dedicated virtual sink, not a live default-sink follow.**
+The original "Capture target" design (follow whatever the system's current
+default sink is) technically worked, but meant anything audible on the host
+was also always audible on the tablet at the same time — not what "the
+tablet is a second speaker" means to someone actually choosing it as an
+output device. `crates/audio::VirtualSink` now creates a dedicated
+PipeWire null sink (`pactl load-module module-null-sink sink_name=padplay`)
+that shows up as its own selectable device in the system's sound settings,
+the same way a USB speaker would; the daemon captures from *that* sink's
+monitor instead of the live default. Torn down via `Drop`
+(`pactl unload-module`), the same RAII posture every other resource in this
+daemon uses. This changes the answer to "does audio need `--redirect-audio`
+as a separate opt-in flag" from the original proposal: it doesn't, because
+the dedicated-sink approach *is* the redirect, and routing to it (or not)
+is now just a normal output-device choice in the host's own sound settings
+rather than something this project has to build a policy for.
+
+**Net effect now**: audio works end to end, verified by listening on real
+hardware — captured, encoded, sent, decoded, and played through the
+tablet's own selectable sound-settings entry, with video unaffected either
+way (measured, not assumed: median round trip holds at ~30-35ms whether
+audio is active or not).

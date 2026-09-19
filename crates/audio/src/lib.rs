@@ -308,6 +308,81 @@ fn pactl_info() -> Option<String> {
     Some(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// A PipeWire null sink the tablet's audio is captured from, so the tablet
+/// shows up as its own selectable output device in the system's sound
+/// settings — the way a real second speaker (or an HDMI monitor's audio
+/// device) does — instead of silently mirroring whatever the system's
+/// *current* default sink happens to be, which plays on both the host's own
+/// speakers and the tablet at once. Created via `pactl load-module
+/// module-null-sink` (PipeWire's own native sink-creation API exists too,
+/// but the PulseAudio-compat module is what `pactl`/every desktop's sound
+/// settings UI already knows how to surface, and this project already shells
+/// out to `pactl` elsewhere in this crate — see `pactl_info`). Removed on
+/// [`Drop`], the same RAII posture `VirtualOutput` and `adb::Forward` use
+/// for every other resource this daemon creates.
+pub struct VirtualSink {
+    module_id: String,
+    sink_name: String,
+}
+
+impl VirtualSink {
+    /// `sink_name` becomes the PipeWire node name — keep it identifier-safe
+    /// (no spaces); `pactl`'s own `key=value` module-argument parser does
+    /// not reliably preserve quoted values containing spaces when passed
+    /// as a single already-tokenized subprocess argument (confirmed by
+    /// testing: a quoted "PadPlay Tablet" description silently truncated to
+    /// just "PadPlay"), so the description shown in sound-settings UIs is
+    /// derived from the same identifier rather than risking that path.
+    pub fn create(sink_name: &str) -> Result<Self> {
+        let description = format!("device.description={sink_name}");
+        let output = std::process::Command::new("pactl")
+            .args([
+                "load-module",
+                "module-null-sink",
+                &format!("sink_name={sink_name}"),
+                &format!("sink_properties={description}"),
+            ])
+            .output()
+            .context("running pactl load-module module-null-sink")?;
+        if !output.status.success() {
+            bail!(
+                "pactl load-module module-null-sink failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        let module_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if module_id.is_empty() {
+            bail!("pactl load-module module-null-sink returned no module id");
+        }
+        Ok(Self {
+            module_id,
+            sink_name: sink_name.to_string(),
+        })
+    }
+
+    /// The monitor source name for [`AudioEncoderConfig::target_node`] —
+    /// PipeWire's null-sink module always names it `<sink_name>.monitor`.
+    pub fn monitor_name(&self) -> String {
+        format!("{}.monitor", self.sink_name)
+    }
+}
+
+impl Drop for VirtualSink {
+    fn drop(&mut self) {
+        let result = std::process::Command::new("pactl")
+            .args(["unload-module", &self.module_id])
+            .status();
+        match result {
+            Ok(status) if status.success() => {}
+            Ok(status) => tracing::warn!(
+                "pactl unload-module {} exited {status}",
+                self.module_id
+            ),
+            Err(e) => tracing::warn!("failed to unload virtual sink module: {e}"),
+        }
+    }
+}
+
 fn has_default_sink(info: &str) -> bool {
     info.lines()
         .find_map(|line| line.strip_prefix("Default Sink:"))
