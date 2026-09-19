@@ -120,7 +120,7 @@ fn main() -> Result<()> {
     let _forward = adb::Forward::new(&device.serial, port, &format!("tcp:{DEVICE_PORT}"))?;
     println!("  forward     tcp:{port} -> tcp:{DEVICE_PORT}");
 
-    let header = stream_header(1920, 1200, 60);
+    let header = stream_header(1920, 1200, 60, None)?;
     let mut sender = Sender::connect(port, &header)?;
     println!("  connected, stream header sent");
 
@@ -145,7 +145,7 @@ fn main() -> Result<()> {
         let keyframe = i % 600 == 0;
 
         let write_start = Instant::now();
-        sender.send_frame(&payload[..size], (i as u64) * 16_666_666, keyframe)?;
+        sender.send_video_frame(&payload[..size], (i as u64) * 16_666_666, keyframe)?;
         write_times.push(write_start.elapsed());
 
         if !flood {
