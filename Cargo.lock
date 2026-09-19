@@ -30,6 +30,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "21e4227379beff4205943696e6c3e0cd809bacdf3f0edd6e3dd153e2269571a4"
 
 [[package]]
+name = "audio"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gstreamer",
+ "gstreamer-app",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
