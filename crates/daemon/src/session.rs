@@ -116,13 +116,16 @@ impl Default for Config {
             // saturates: 163 of 1764 frames unacked and a 208 ms stall.
             fps: 90,
             bitrate_kbps: 20_000,
-            // Below a primary at 0x0, starting at y = 1080. This assumes the
-            // primary is no taller than 1080px — on a taller display the
-            // virtual output would overlap it rather than sit below. Override
-            // with `--position`/`--position-y` if that does not hold for your
-            // layout.
-            position_x: 0,
-            position_y: 1080,
+            // To the right of a 1920x1080 primary at 0x0 — this fork's own
+            // reference layout (see `~/.config/niri/config.d/output.kdl`,
+            // which places the evdi connector at the same x=1920, y=0 as a
+            // static pre-connect default). The daemon's own `wlr-randr`
+            // reposition on every niri connect always wins over that static
+            // config, so the two need to agree, and this is the one that
+            // actually matches the hardware this fork runs on. Override with
+            // `--position`/`--position-y` if your layout differs.
+            position_x: 1920,
+            position_y: 0,
             output_name: capture::VIRTUAL_OUTPUT_NAME.to_string(),
             paint_cursor: false,
             stats: false,
