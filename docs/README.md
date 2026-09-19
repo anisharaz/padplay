@@ -17,6 +17,7 @@ backed by a measurement taken on that hardware.
 | [04-android-app.md](04-android-app.md) | Stage 4 — Android decoder app, build and install |
 | [05-daemon.md](05-daemon.md) | Stage 5 — daemon, hotplug detection, systemd service |
 | [06-plasma-backend.md](06-plasma-backend.md) | Stage 6 — KDE Plasma: why it is blocked, and the grant that unblocks it |
+| [07-audio-proposal.md](07-audio-proposal.md) | Audio: design proposal (research complete, not yet implemented) |
 | [COMPATIBILITY.md](COMPATIBILITY.md) | What each compositor and distribution needs |
 | [REVERT.md](REVERT.md) | How to undo everything this project touches |
 
