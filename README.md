@@ -154,12 +154,12 @@ padplay --seconds 15     stop after 15 s and print latency statistics
 --width <PX> --height <PX> pin an explicit resolution (both required)
 --fps <N>                  virtual output refresh rate   [default: 90]
 --bitrate <KBPS>           H.264 target bitrate          [default: 20000]
---position <X>             x offset of the virtual output [default: -1536]
---position-y <Y>           y offset of the virtual output [default: 0]
-                           default sits to the left of a 1920x1080 primary
-                           at 0x0; override either axis to fit your layout.
-                           Position is in logical (post-scale) pixels, so
-                           it depends on --scale
+--position <X>             x offset of the virtual output [default: 0]
+--position-y <Y>           y offset of the virtual output [default: 1080]
+                           default sits directly below a 1920x1080 primary
+                           at 0x0, left-aligned; override either axis to
+                           fit your layout. Position is in logical
+                           (post-scale) pixels, so it depends on --scale
 --scale <N>                virtual output scale           [default: 1.25]
                            niri only; the tablet panel is physically small,
                            so native scale reads tiny up close
